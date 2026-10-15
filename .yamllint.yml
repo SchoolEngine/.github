@@ -1,0 +1,32 @@
+# SchoolEngine yamllint configuration. Copy to the repository root as
+# .yamllint.yml (read by the `YAML and Markdown lint` job of ci.yml).
+# Compatible with ansible-lint, which reads the same file.
+extends: default
+
+rules:
+  # Issue forms and workflow comments hold long prose and URLs.
+  line-length: disable
+  # Leading `---` is optional.
+  document-start: disable
+  # `on:` in GitHub Actions workflows is a key, not a boolean.
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+  # ansible-lint requirements.
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  braces:
+    max-spaces-inside: 1
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+
+ignore: |
+  node_modules/
+  .dart_tool/
+  build/
+  coverage/
+  pnpm-lock.yaml
+  *.sops.yml
+  *.sops.yaml

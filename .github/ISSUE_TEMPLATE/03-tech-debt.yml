@@ -50,8 +50,7 @@ body:
     attributes:
       label: Acceptance criteria
       description: Verifiable list, Given/When/Then where useful.
-      value: |
-        - [ ] 
+      value: "- [ ] \n"
     validations:
       required: true
   - type: dropdown

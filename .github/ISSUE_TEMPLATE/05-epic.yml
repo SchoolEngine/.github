@@ -35,12 +35,7 @@ body:
     attributes:
       label: Scope
       description: In scope and explicitly out of scope.
-      value: |
-        In scope:
-        - 
-
-        Out of scope:
-        - 
+      value: "In scope:\n- \n\nOut of scope:\n- \n"
     validations:
       required: true
   - type: textarea
@@ -53,8 +48,7 @@ body:
     attributes:
       label: Acceptance criteria
       description: What must be demonstrated for the lot to be accepted.
-      value: |
-        - [ ] 
+      value: "- [ ] \n"
     validations:
       required: true
   - type: textarea

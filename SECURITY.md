@@ -6,7 +6,7 @@ SchoolEngine processes personal data of children and their parents. Vulnerabilit
 
 Do **not** open a regular issue, pull request or discussion that describes an exploitable vulnerability.
 
-Report it by email to **dev@monatelierweb.com** with:
+Report it by email to **<dev@monatelierweb.com>** with:
 
 - the repository and the affected component, version or commit;
 - a description of the issue and its impact;
