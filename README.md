@@ -12,6 +12,8 @@ Organization-level files of SchoolEngine.
 | `workflow-templates/` | Organisation workflow templates `ci-common`, `ci-node`, `ci-flutter`, `ci-openapi`, `ci-ansible` (Actions > New workflow). |
 | `templates/lint/` | Default `.yamllint.yml` and `.markdownlint-cli2.yaml` copied to each repository root. |
 | `templates/openapi/` | Default `.spectral.yaml` (extends `spectral:oas`) for the contracts repository. |
+| `DEPENDABOT.md` | Dependency update rules and how each repository adopts its template. |
+| `templates/dependabot/` | `dependabot.yml` templates: `common`, `node`, `flutter`, and the `container` entry. |
 
 ## Inheritance by the other repositories
 
