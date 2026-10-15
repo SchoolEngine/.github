@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/SchoolEngine/.github/blob/develop/SECURITY.md
+    about: Never open an issue for an exploitable vulnerability. Follow the private reporting procedure instead.
+  - name: Contributing guide
+    url: https://github.com/SchoolEngine/.github/blob/develop/CONTRIBUTING.md
+    about: Workflow, naming conventions and the Definition of Ready and Done.

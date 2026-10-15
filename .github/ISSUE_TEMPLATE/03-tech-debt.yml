@@ -1,0 +1,89 @@
+name: Tech debt
+description: Refactoring, tooling or dependency work without change of user-facing behavior. It is a sub-issue of the lot epic.
+title: "refactor(<scope>): <imperative description>"
+labels: ["tech-debt"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One ticket = one pull request (target under ~400 diff lines). After creating it, attach it as a sub-issue of the lot epic in `SchoolEngine/architecture`.
+        The title follows Conventional Commits (`refactor`, `chore`, `ci`, `perf` or `test`), in English, without the issue number.
+  - type: input
+    id: parent_epic
+    attributes:
+      label: Parent epic
+      description: URL of the lot epic this ticket belongs to.
+      placeholder: https://github.com/SchoolEngine/architecture/issues/1
+    validations:
+      required: true
+  - type: input
+    id: spec_reference
+    attributes:
+      label: Spec reference
+      description: Section of the founding specification or ADR that motivates the work, or "n/a".
+      placeholder: "FR-05, §20"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this ticket exists.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: The cost of leaving things as they are (risk, slowness, duplication, outdated dependency).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: The target state. Observable behavior stays the same unless stated otherwise.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Verifiable list, Given/When/Then where useful.
+      value: |
+        - [ ] 
+    validations:
+      required: true
+  - type: dropdown
+    id: contract_impact
+    attributes:
+      label: Contract impact
+      description: Effect on the OpenAPI contract. A breaking change needs a prior explicit decision and the `breaking-change-approved` label.
+      options:
+        - none
+        - additive
+        - breaking
+    validations:
+      required: true
+  - type: textarea
+    id: technical_notes
+    attributes:
+      label: Technical notes
+      description: Leads, constraints, modules and contracts touched.
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Blocking tickets or decisions (owner/repo#n), or "None".
+      value: None.
+    validations:
+      required: true
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of Done
+      description: Spec §38 applies. Add the criteria specific to this ticket.
+      value: |
+        Per spec §38: acceptance criteria demonstrated, tests at every relevant level, green `Quality Gate`, no secret or new personal data in logs, contracts and clients regenerated if the API changed, documentation and repo map updated in the same PR, squash-merged into `develop` with Céline's approval, branch and worktree removed, verified on staging.
+    validations:
+      required: true

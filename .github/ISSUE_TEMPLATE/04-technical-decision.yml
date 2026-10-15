@@ -1,0 +1,81 @@
+name: Technical decision (ADR request)
+description: A technical choice to settle (library, structure, pattern, tooling). Open it in SchoolEngine/architecture; the pull request that writes the ADR closes it.
+title: "docs(adr): <the question to settle>"
+labels: ["docs"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Technical decisions live in `SchoolEngine/architecture`. If you are in another repository, open this issue there instead.
+        Attach it as a sub-issue of the lot epic whose work it conditions. Architectural decisions are validated by Céline before they are recorded.
+  - type: input
+    id: parent_epic
+    attributes:
+      label: Parent epic
+      description: URL of the lot epic whose work depends on this decision.
+      placeholder: https://github.com/SchoolEngine/architecture/issues/1
+    validations:
+      required: true
+  - type: input
+    id: spec_reference
+    attributes:
+      label: Spec reference
+      description: Section of the founding specification or existing ADR concerned.
+      placeholder: "§19, ADR-004"
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: The decision to make, as one closed question.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why the question arises now, and the forces at play (constraints, requirements, deadlines).
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options considered
+      description: Each option with its consequences (security, cost, maintenance, reversibility).
+      value: |
+        1. 
+        2. 
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recommendation
+      description: The option you propose and why. Leave empty if you have none.
+  - type: dropdown
+    id: contract_impact
+    attributes:
+      label: Contract impact
+      options:
+        - none
+        - additive
+        - breaking
+    validations:
+      required: true
+  - type: textarea
+    id: blocked_tickets
+    attributes:
+      label: Blocked tickets
+      description: Tickets that wait for this decision (owner/repo#n), or "None".
+      value: None.
+    validations:
+      required: true
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of Done
+      value: |
+        Decision validated by Céline, ADR written in `architecture/adr/` and merged by a pull request that closes this issue, blocked tickets updated, founding specification amended through `SoutienScolaireApp/docs` if the decision is structural.
+    validations:
+      required: true
