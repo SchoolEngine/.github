@@ -7,9 +7,9 @@ Every SchoolEngine repository owns one workflow, `.github/workflows/ci.yml`, cop
 | Template | For | Jobs on top of the common ones |
 |---|---|---|
 | [`ci-common`](workflow-templates/ci-common.yml) | Docs and configuration repositories (`architecture`, `.github`) | none |
-| [`ci-node`](workflow-templates/ci-node.yml) | pnpm repositories (`backend`, `parent-web`, `admin-web`) | `node`: frozen install, lint, typecheck, tests with a coverage floor (`COVERAGE_MIN`, default 80 %), build |
+| [`ci-node`](workflow-templates/ci-node.yml) | pnpm repositories (`backend`, `parent-web`, `admin-web`) | `node`: frozen install, lint, typecheck, tests with a coverage floor (`COVERAGE_MIN`: 80 % for `backend`, 70 % for `parent-web` and `admin-web`), build |
 | [`ci-flutter`](workflow-templates/ci-flutter.yml) | `mobile-app` | `flutter`: pinned SDK (checksum verified), enforced lockfile, `dart format --set-exit-if-changed`, `flutter analyze`, `flutter test --coverage`, coverage floor 70 % |
-| [`ci-openapi`](workflow-templates/ci-openapi.yml) | `contracts` | `openapi-lint` (Redocly or Spectral, chosen by the contracts ticket), `oasdiff` (breaking changes against the base branch), `generation-drift` (`git status` must stay clean after regeneration) |
+| [`ci-openapi`](workflow-templates/ci-openapi.yml) | `contracts` | `openapi-lint` (Spectral 6.16.3 standalone binary, checksum verified, rule set `.spectral.yaml` from `templates/openapi/`, warnings block), `oasdiff` (breaking changes against the base branch), `generation-drift` (`git status` must stay clean after regeneration) |
 | [`ci-ansible`](workflow-templates/ci-ansible.yml) | `infrastructure` | `ansible`: pinned ansible-core and ansible-lint, `--syntax-check` of every playbook; `sops`: every `*.sops.*` file is encrypted |
 
 Common jobs, in every template:
@@ -28,7 +28,8 @@ Placeholders that a scaffold ticket must fill are marked `TODO(scaffold)` in the
 ## Using a template
 
 1. In the repository, open **Actions > New workflow**: the templates are listed in the section of workflows created by SchoolEngine. If they are not shown, copy the file by hand: `workflow-templates/ci-<variant>.yml` to `.github/workflows/ci.yml`.
-2. Copy `templates/lint/.yamllint.yml` and `templates/lint/.markdownlint-cli2.yaml` to the repository root. The lint job refuses to run without them.
+2. Copy `templates/lint/.yamllint.yml` and `templates/lint/.markdownlint-cli2.yaml` to the repository root (and, for `contracts`, `templates/openapi/.spectral.yaml`). The lint jobs refuse to run without them.
+   For a pnpm repository, pin pnpm in the `packageManager` field of `package.json` to a major that Dependabot supports (GitHub documents pnpm v7 to v10; `pnpm@10.34.6` on 2026-10-15).
 3. Fill the `TODO(scaffold)` placeholders, open the pull request, and check that every job, then `Quality Gate`, is green.
 
 The templates are only offered from the default branch (`develop`) of this repository, once merged.
@@ -43,7 +44,7 @@ The templates are only offered from the default branch (`develop`) of this repos
 - `timeout-minutes` on every job.
 - `actions/checkout` always with `persist-credentials: false`.
 - Third-party actions pinned by full commit SHA with a `# owner/action@vX.Y.Z` comment (enforced by the organisation). No wrapper action for the security tools.
-- Tool versions pinned in the workflow `env:` block, one place per template. gitleaks, actionlint, osv-scanner and oasdiff come from their GitHub releases and are verified against the published checksum file before running; the Flutter SDK archive against the sha256 of the Flutter release index.
+- Tool versions pinned in the workflow `env:` block, one place per template. gitleaks, actionlint, osv-scanner and oasdiff come from their GitHub releases and are verified against the published checksum file before running; the Spectral binary against a pinned sha256 (its release publishes no checksum file; the value is the asset digest shown by GitHub); the Flutter SDK archive against the sha256 of the Flutter release index.
 - PR title, body and labels never appear in a `${{ }}` expression inside `run:` (script injection): they are fetched by the script and kept in shell variables.
 
 ## The Quality Gate
@@ -68,7 +69,7 @@ Rules, all learned on TheOpenMusicBox:
 
 ## Bumping a tool version
 
-Versions downloaded in `run:` steps are not seen by Dependabot. To bump one: change the version (and, for Flutter, the sha256) in the `env:` block of the template here, then in each repository's `ci.yml`. Actions in `uses:` are bumped by Dependabot (`github-actions` ecosystem), keeping the SHA and the version comment in sync.
+Versions downloaded in `run:` steps are not seen by Dependabot. To bump one: change the version (and, for Flutter and Spectral, the sha256: the Flutter release index, or the asset digest of the Spectral GitHub release) in the `env:` block of the template here, then in each repository's `ci.yml`. Actions in `uses:` are bumped by Dependabot (`github-actions` ecosystem), keeping the SHA and the version comment in sync.
 
 ## Runners: GitHub-hosted now, self-hosted later
 

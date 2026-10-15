@@ -1,0 +1,8 @@
+# SchoolEngine Spectral rule set. Copy to the root of the contracts repository
+# as .spectral.yaml (read by the `OpenAPI lint (Spectral)` job of ci.yml).
+# Starts from the built-in OpenAPI rules; project rules are added below by the
+# contracts ticket, each with a comment explaining why.
+extends:
+  - "spectral:oas"
+
+rules: {}

@@ -32,7 +32,8 @@ env:
   MARKDOWNLINT_CLI2_VERSION: '0.23.3'
   PYTHON_VERSION: '3.13'
   NODE_VERSION: '24.21.0'
-  # Coverage floor of the test job, in percent of lines (spec §28).
+  # Coverage floor of the test job, in percent of lines (spec §28): 80 for the
+  # backend, 70 for the web apps (parent-web, admin-web).
   COVERAGE_MIN: '80'
 
 jobs:
@@ -255,7 +256,8 @@ jobs:
   # TODO(scaffold): the scripts `lint`, `typecheck`, `test:coverage` and `build`
   # are defined in package.json by the scaffold ticket; a missing script fails
   # the job (fail closed). pnpm's version comes from the `packageManager` field
-  # of package.json.
+  # of package.json: pin a pnpm major that Dependabot supports (pnpm@10.34.6
+  # on 2026-10-15; GitHub documents v7 to v10).
   node:
     name: Node (lint, typecheck, test, build)
     # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).

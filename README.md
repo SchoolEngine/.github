@@ -11,6 +11,7 @@ Organization-level files of SchoolEngine.
 | `CI.md` | Shape and rules of every repository's `ci.yml`, the `Quality Gate` contract. |
 | `workflow-templates/` | Organisation workflow templates `ci-common`, `ci-node`, `ci-flutter`, `ci-openapi`, `ci-ansible` (Actions > New workflow). |
 | `templates/lint/` | Default `.yamllint.yml` and `.markdownlint-cli2.yaml` copied to each repository root. |
+| `templates/openapi/` | Default `.spectral.yaml` (extends `spectral:oas`) for the contracts repository. |
 
 ## Inheritance by the other repositories
 

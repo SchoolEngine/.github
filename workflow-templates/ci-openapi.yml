@@ -35,6 +35,9 @@ env:
   # TODO(scaffold): path of the OpenAPI document in the contracts repository.
   OPENAPI_SPEC: 'openapi/openapi.yaml'
   OASDIFF_VERSION: '1.33.0'
+  # Spectral standalone binary; sha256 = the GitHub release asset digest.
+  SPECTRAL_VERSION: '6.16.3'
+  SPECTRAL_SHA256: 'b90ac8da7b804d04052b9db8d4ea5028d29fba9bc69b02dc85d46e5fcc476452'
 
 jobs:
   pr-conventions:
@@ -254,7 +257,7 @@ jobs:
           echo "Only moderate or low findings: not blocking (tracked by Dependabot alerts)."
 
   openapi-lint:
-    name: OpenAPI lint
+    name: OpenAPI lint (Spectral)
     # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
     # Future: runs-on: [self-hosted, Linux, X64, node]
     runs-on: ubuntu-latest
@@ -266,21 +269,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # actions/setup-node@v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          package-manager-cache: false
-
-      # TODO(scaffold): the contracts ticket chooses the linter. Replace this
-      # step with ONE of (versions pinned, rule set committed in the repo):
-      #   npx --yes @redocly/cli@2.54.3 lint "$OPENAPI_SPEC"
-      #   npx --yes @stoplight/spectral-cli@6.16.3 lint --fail-severity=warn "$OPENAPI_SPEC"
-      # Until then the step fails closed.
-      - name: Lint the OpenAPI document (linter to choose)
+      - name: Install Spectral (pinned, checksum verified)
         run: |
-          echo "::error::OpenAPI linter not chosen yet (Redocly CLI or Spectral): see the TODO(scaffold) above."
-          exit 1
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/spectral" \
+            "https://github.com/stoplightio/spectral/releases/download/v${SPECTRAL_VERSION}/spectral-linux-x64"
+          echo "${SPECTRAL_SHA256}  $RUNNER_TEMP/bin/spectral" | sha256sum --check --strict -
+          chmod +x "$RUNNER_TEMP/bin/spectral"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # Rule set: .spectral.yaml at the repository root, copied from
+      # templates/openapi/.spectral.yaml (extends spectral:oas). Warnings block.
+      - name: Lint the OpenAPI document
+        run: |
+          set -euo pipefail
+          if [[ ! -f .spectral.yaml ]]; then
+            echo "::error::.spectral.yaml is missing: copy it from templates/openapi/ in SchoolEngine/.github."
+            exit 1
+          fi
+          spectral --version
+          spectral lint --ruleset .spectral.yaml --fail-severity=warn "$OPENAPI_SPEC"
 
   oasdiff:
     name: Breaking changes (oasdiff)

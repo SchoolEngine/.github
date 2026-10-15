@@ -26,6 +26,7 @@ These rules apply to every SchoolEngine repository. A repository's own `CLAUDE.m
    | `fix` | Bug fix |
    | `refactor` | Restructuring without behavior change |
    | `chore` | Tooling, dependencies, configuration |
+   | `ci` | CI workflows and their templates |
    | `docs` | Documentation only |
    | `test` | Tests only |
 
