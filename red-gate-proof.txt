@@ -1,0 +1,3 @@
+Throwaway file proving that the Quality Gate turns red.
+The token below is FAKE (not a real credential), on purpose for gitleaks.
+GITHUB_TOKEN=ghp_FAKEredGateProof9k2Lm7Qx4Zp8Vn3Ws6Tb
