@@ -34,6 +34,15 @@ A Dependabot PR goes through the same `Quality Gate` as any other and is merged 
 
 Tool versions downloaded inside CI steps (gitleaks, osv-scanner, actionlint, oasdiff, the Flutter SDK, Node.js) are invisible to Dependabot and are bumped by hand in the CI templates (see [CI.md](CI.md)).
 
+## Ignored majors
+
+The `node.yml` template ignores two semver-major updates in every `npm` ecosystem. A major of either package is closed with a comment, never merged on its own:
+
+- **`@types/node`** follows the Node.js runtime we pin (Node 24 LTS). A newer major of the types describes APIs that do not exist at runtime. Change the rule when the LTS pin moves.
+- **`typescript`** stays on 6.0.x in every repository, because typescript-eslint supports TypeScript < 6.1 only. Lift the rule when typescript-eslint supports TypeScript 7, then bump every repository in one coordinated change.
+
+`update-types` filters version updates only: minor and patch updates of both packages, and every security update, still come.
+
 ## Generated API clients
 
 `@usc/api-client` and `usc_api_client` are git-tag dependencies on the private `contracts` repository (ADR-013, SchoolEngine/architecture#6). The templates **ignore** them: they are bumped by the contract change procedure (a PR per consumer after a new contracts tag), not by Dependabot. If ADR-013 shows that Dependabot can propose those tag bumps, remove the `ignore` entry; Dependabot then also needs read access to `contracts` (organisation setting "Grant Dependabot access to private repositories").
