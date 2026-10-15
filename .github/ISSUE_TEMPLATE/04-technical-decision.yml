@@ -43,9 +43,7 @@ body:
     attributes:
       label: Options considered
       description: Each option with its consequences (security, cost, maintenance, reversibility).
-      value: |
-        1. 
-        2. 
+      value: "1. \n2. \n"
     validations:
       required: true
   - type: textarea

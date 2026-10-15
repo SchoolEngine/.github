@@ -14,6 +14,9 @@ Organization-level files of SchoolEngine.
 | `templates/openapi/` | Default `.spectral.yaml` (extends `spectral:oas`) for the contracts repository. |
 | `DEPENDABOT.md` | Dependency update rules and how each repository adopts its template. |
 | `templates/dependabot/` | `dependabot.yml` templates: `common`, `node`, `flutter`, and the `container` entry. |
+| `.github/workflows/ci.yml` | CI of this repository, from the `ci-common` template: produces the `Quality Gate` check. |
+| `.github/dependabot.yml` | Dependabot configuration of this repository, from the `common` template (`github-actions`). |
+| `.yamllint.yml`, `.markdownlint-cli2.yaml` | Lint configuration of this repository, copies of `templates/lint/`. |
 
 ## Inheritance by the other repositories
 
@@ -21,4 +24,4 @@ This repository is public, so GitHub applies these files as defaults to every Sc
 
 Being public, this repository must never hold anything confidential: no secret, no personal data, no internal roadmap or security posture.
 
-Work tracking: https://github.com/SoutienScolaireApp/docs/issues/11
+Work tracking: <https://github.com/SoutienScolaireApp/docs/issues/11>

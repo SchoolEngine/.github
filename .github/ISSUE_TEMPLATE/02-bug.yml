@@ -36,12 +36,7 @@ body:
     attributes:
       label: Problem
       description: What happens, and the steps to reproduce it (environment, version or commit, request or screen). Use synthetic data only, never a real user's data.
-      value: |
-        Steps to reproduce:
-        1. 
-        2. 
-
-        Observed:
+      value: "Steps to reproduce:\n1. \n2. \n\nObserved:\n"
     validations:
       required: true
   - type: textarea
@@ -56,8 +51,7 @@ body:
     attributes:
       label: Acceptance criteria
       description: Verifiable list, including a regression test that fails before the fix.
-      value: |
-        - [ ] 
+      value: "- [ ] \n"
     validations:
       required: true
   - type: dropdown
