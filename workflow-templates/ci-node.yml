@@ -1,0 +1,339 @@
+# SchoolEngine CI template: ci-node
+# Node.js / TypeScript repositories with pnpm (backend, parent-web, admin-web).
+#
+# Copy this file to .github/workflows/ci.yml and fill the placeholders marked
+# TODO(scaffold). Shape, rules and the Quality Gate contract: CI.md in
+# SchoolEngine/.github. Never rename the `quality-gate` job nor its name
+# `Quality Gate`: it is the single required check of the protect-develop ruleset.
+# A new job is added to the `needs:` list of `quality-gate`, nothing else.
+
+name: CI
+
+# No `edited` trigger by design: after editing the PR title or body, push a
+# commit or re-run the `PR title and linked issue` job.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+# Tool versions: one place per template. Run-step downloads are not seen by
+# Dependabot: bump them here by hand (ADR-014).
+env:
+  GITLEAKS_VERSION: '8.30.1'
+  ACTIONLINT_VERSION: '1.7.12'
+  OSV_SCANNER_VERSION: '2.7.0'
+  YAMLLINT_VERSION: '1.38.0'
+  MARKDOWNLINT_CLI2_VERSION: '0.23.3'
+  PYTHON_VERSION: '3.13'
+  NODE_VERSION: '24.21.0'
+  # Coverage floor of the test job, in percent of lines (spec §28): 80 for the
+  # backend, 70 for the web apps (parent-web, admin-web).
+  COVERAGE_MIN: '80'
+
+jobs:
+  pr-conventions:
+    name: PR title and linked issue
+    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
+    # Future: runs-on: [self-hosted, Linux, X64, <lane>]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check the Conventional Commits title and the closing keyword
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Title and body are fetched live from the API and only ever held in
+          # shell variables: never interpolated into the script (injection), and
+          # a re-run sees a title edited after the last push.
+          pr_json=$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${REPO}/pulls/${PR_NUMBER}")
+          title=$(jq -r '.title' <<<"$pr_json")
+          body=$(jq -r '.body // ""' <<<"$pr_json")
+          author=$(jq -r '.user.login' <<<"$pr_json")
+
+          status=0
+          title_re='^(feat|fix|refactor|chore|docs|test|perf|ci)(\([a-z0-9._/-]+\))?!?: [^ ].*$'
+          if [[ "$title" =~ $title_re ]]; then
+            echo "Title OK: $title"
+          else
+            echo "::error::PR title is not Conventional Commits: '<type>(<scope>): <description> (#<issue>)', type in feat|fix|refactor|chore|docs|test|perf|ci. Got: $title"
+            status=1
+          fi
+
+          # Dependabot PRs have no issue: exempt from the closing keyword only.
+          if [[ "$author" == "dependabot[bot]" ]]; then
+            echo "Dependabot PR: closing keyword not required."
+          elif grep -Eiq '(^|[^[:alnum:]_])(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(([[:alnum:]_.-]+/[[:alnum:]_.-]+)?#[0-9]+|https://github\.com/[[:alnum:]_.-]+/[[:alnum:]_.-]+/issues/[0-9]+)' <<<"$body"; then
+            echo "Closing keyword found."
+          else
+            echo "::error::The PR body must link its issue with 'Closes #<n>' (or Fixes/Resolves, or 'Closes <owner>/<repo>#<n>')."
+            status=1
+          fi
+          exit "$status"
+
+  gitleaks:
+    name: Secrets (gitleaks)
+    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
+    # Future: runs-on: [self-hosted, Linux, X64, <lane>]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout with history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks (pinned, checksum verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          sums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          curl -fsSLO "$base/$archive"
+          curl -fsSLO "$base/$sums"
+          awk -v f="$archive" '$2 == f' "$sums" | sha256sum --check --strict -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/bin" gitleaks
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # A finding means the secret is already on GitHub: rotate it first, then
+      # remove it from the branch (CI.md, ADR-014).
+      - name: Scan the commits of the PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: gitleaks git --no-banner --redact --verbose --log-opts="${BASE_SHA}..${HEAD_SHA}" .
+
+  actionlint:
+    name: Workflows (actionlint)
+    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
+    # Future: runs-on: [self-hosted, Linux, X64, <lane>]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint (pinned, checksum verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
+          base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          sums="actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          curl -fsSLO "$base/$archive"
+          curl -fsSLO "$base/$sums"
+          awk -v f="$archive" '$2 == f' "$sums" | sha256sum --check --strict -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/bin" actionlint
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # actionlint also runs shellcheck on `run:` scripts when shellcheck is on
+      # the PATH (preinstalled on ubuntu-latest).
+      - name: Lint the workflows
+        run: actionlint -color
+
+  lint-yaml-markdown:
+    name: YAML and Markdown lint
+    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
+    # Future: runs-on: [self-hosted, Linux, X64, <lane>]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require the lint configuration files
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in .yamllint.yml .markdownlint-cli2.yaml; do
+            if [[ ! -f "$f" ]]; then
+              echo "::error::$f is missing: copy it from templates/lint/ in SchoolEngine/.github."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: yamllint
+        run: |
+          python -m pip install --disable-pip-version-check "yamllint==${YAMLLINT_VERSION}"
+          yamllint --strict .
+
+      - name: markdownlint
+        run: npx --yes "markdownlint-cli2@${MARKDOWNLINT_CLI2_VERSION}"
+
+  osv-scanner:
+    name: Vulnerable dependencies (osv-scanner)
+    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
+    # Future: runs-on: [self-hosted, Linux, X64, <lane>]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install osv-scanner (pinned, checksum verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
+          base="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}"
+          binary="osv-scanner_linux_amd64"
+          curl -fsSLO "$base/$binary"
+          curl -fsSLO "$base/osv-scanner_SHA256SUMS"
+          awk -v f="$binary" '$2 == f' osv-scanner_SHA256SUMS | sha256sum --check --strict -
+          install -m 0755 "$binary" "$RUNNER_TEMP/bin/osv-scanner"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # Blocks on high and critical only (CVSS >= 7.0); a finding without a
+      # severity score blocks too. Moderate and low go through Dependabot
+      # alerts. A finding with no fix is ignored only in osv-scanner.toml
+      # ([[IgnoredVulns]] with reason and ignoreUntil), reviewed in the PR.
+      - name: Scan the committed lockfiles
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/osv.json"
+          rc=0
+          osv-scanner scan source -r --format json --output-file "$report" . || rc=$?
+          case "$rc" in
+            0) echo "No known vulnerability."; exit 0 ;;
+            1) ;;
+            128) echo "::notice::No lockfile found: nothing to scan."; exit 0 ;;
+            *) echo "::error::osv-scanner failed with exit code $rc (not a verdict): failing closed."; exit 1 ;;
+          esac
+
+          findings=$(jq -r '
+            [ .results[]?.packages[]? | . as $p | .groups[]?
+              | ((.max_severity // "") as $s | (try ($s | tonumber) catch -1)) as $score
+              | {pkg: "\($p.package.ecosystem) \($p.package.name)@\($p.package.version)",
+                 ids: (.ids | join(", ")), score: $score} ]' "$report")
+          echo "All findings:"
+          jq -r '.[] | "  \(.pkg): \(.ids) (CVSS \(if .score < 0 then "unknown" else .score end))"' <<<"$findings"
+
+          blocking=$(jq '[.[] | select(.score < 0 or .score >= 7.0)] | length' <<<"$findings")
+          if [[ "$blocking" -gt 0 ]]; then
+            echo "::error::$blocking high, critical or unscored vulnerability group(s) found."
+            exit 1
+          fi
+          echo "Only moderate or low findings: not blocking (tracked by Dependabot alerts)."
+
+  # TODO(scaffold): the scripts `lint`, `typecheck`, `test:coverage` and `build`
+  # are defined in package.json by the scaffold ticket; a missing script fails
+  # the job (fail closed). pnpm's version comes from the `packageManager` field
+  # of package.json: pin a pnpm major that Dependabot supports (pnpm@10.34.6
+  # on 2026-10-15; GitHub documents v7 to v10).
+  node:
+    name: Node (lint, typecheck, test, build)
+    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
+    # Future: runs-on: [self-hosted, Linux, X64, node]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # pnpm/action-setup@v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      # The test runner must write coverage/coverage-summary.json (Vitest:
+      # coverage.reporter includes 'json-summary').
+      - name: Test with coverage
+        run: pnpm run test:coverage
+
+      - name: Coverage floor
+        run: |
+          set -euo pipefail
+          summary=coverage/coverage-summary.json
+          if [[ ! -f "$summary" ]]; then
+            echo "::error::$summary not found: enable the json-summary coverage reporter."
+            exit 1
+          fi
+          pct=$(jq -r '.total.lines.pct' "$summary")
+          echo "Line coverage: ${pct} % (floor ${COVERAGE_MIN} %)"
+          if ! awk -v p="$pct" -v m="$COVERAGE_MIN" 'BEGIN { exit !(p + 0 >= m + 0) }'; then
+            echo "::error::Line coverage ${pct} % is below the floor of ${COVERAGE_MIN} %."
+            exit 1
+          fi
+
+      - name: Build
+        run: pnpm run build
+
+  # The single required check. Its `if:` is exactly `!cancelled()` and nothing
+  # else: a false condition skips the job and a skipped required check counts
+  # as passing. No fork guard here on purpose: on a fork PR every job above is
+  # skipped and this gate fails.
+  quality-gate:
+    name: Quality Gate
+    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
+    # Future: runs-on: [self-hosted, Linux, X64, <lane>]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [pr-conventions, gitleaks, actionlint, lint-yaml-markdown, osv-scanner, node]
+    if: ${{ !cancelled() }}
+    steps:
+      - name: Require every job to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS_JSON"
+          failed=$(jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")' <<<"$NEEDS_JSON")
+          if [[ -n "$failed" ]]; then
+            echo "::error::Quality Gate failed: not successful: $failed"
+            exit 1
+          fi
+          echo "Quality Gate passed."

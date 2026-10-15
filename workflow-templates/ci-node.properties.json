@@ -1,0 +1,14 @@
+{
+  "name": "SchoolEngine CI: Node.js (pnpm)",
+  "description": "Quality Gate for pnpm repositories: common checks plus lint, typecheck, tests with a coverage floor and build.",
+  "categories": [
+    "Continuous integration",
+    "JavaScript",
+    "TypeScript",
+    "Node"
+  ],
+  "filePatterns": [
+    "pnpm-lock\\.yaml$",
+    "package\\.json$"
+  ]
+}

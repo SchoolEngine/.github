@@ -1,0 +1,23 @@
+# SchoolEngine markdownlint-cli2 configuration. Copy to the repository root as
+# .markdownlint-cli2.yaml (read by the `YAML and Markdown lint` job of ci.yml).
+config:
+  default: true
+  # Line length: prose is not wrapped by hand.
+  MD013: false
+  # Repeated headings are fine in different sections (changelogs, ADRs).
+  MD024:
+    siblings_only: true
+  # Templates (PR template, issue forms) start with an HTML comment, not a heading.
+  MD041: false
+  # Table delimiter rows are written `|---|---|` without padding.
+  MD060: false
+
+globs:
+  - "**/*.md"
+
+ignores:
+  - "**/node_modules/**"
+  - "**/.dart_tool/**"
+  - "**/build/**"
+  - "**/coverage/**"
+  - "**/CHANGELOG.md"
