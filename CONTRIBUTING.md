@@ -31,7 +31,7 @@ These rules apply to every SchoolEngine repository. A repository's own `CLAUDE.m
 
 4. **Commits:** [Conventional Commits](https://www.conventionalcommits.org/), in English: `<type>(<scope>): <imperative description> (#<issue>)`. Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`. The scope is the module or domain touched. The body explains why, never how.
 5. **Pull request** against `develop`, using the template: `Closes #<issue>`, context, changes, what to review first, contract impact (none, additive, breaking) and the Definition of Done checklist. Its title follows the commit format and becomes the squash message. Target size: under ~400 diff lines.
-6. **CI:** the `Quality Gate` check must be green. A red CI is never bypassed: fix the cause, never the test or the threshold.
+6. **CI:** the `Quality Gate` check (format, lint, types, tests, gitleaks, osv-scanner, contract) must be green. A red CI is never bypassed: fix the cause, never the test or the threshold.
 7. **Merge:** squash and merge only, and only with Céline's explicit approval. Nobody merges on their own initiative.
 8. **Cleanup:** the branch is deleted on merge; remove the local branch and the worktree.
 
@@ -48,6 +48,7 @@ An API change is never local: a pull request in `contracts` first, then the rele
 - No secret in git, ever, not even temporarily.
 - No real user data outside production: local and staging use synthetic data only.
 - No personal data in logs, issues, pull requests or screenshots.
+- Install the [gitleaks](https://github.com/gitleaks/gitleaks) pre-commit hook (recommended, not mandatory) to catch a secret before it is committed. The `Quality Gate` runs gitleaks and osv-scanner (dependency audit) on every pull request regardless, and a finding blocks the merge.
 
 ## Security
 
