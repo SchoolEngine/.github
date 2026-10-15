@@ -1,0 +1,12 @@
+{
+  "name": "SchoolEngine CI: Flutter",
+  "description": "Quality Gate for Flutter repositories: common checks plus dart format, flutter analyze and tests with a 70 % coverage floor.",
+  "categories": [
+    "Continuous integration",
+    "Dart",
+    "Flutter"
+  ],
+  "filePatterns": [
+    "pubspec\\.yaml$"
+  ]
+}

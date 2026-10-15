@@ -8,6 +8,9 @@ Organization-level files of SchoolEngine.
 | `.github/PULL_REQUEST_TEMPLATE.md` | Pull request template: `Closes #`, context, changes, review priorities, contract impact, Definition of Done checklist. |
 | `CONTRIBUTING.md` | Workflow and naming conventions shared by every repository. |
 | `SECURITY.md` | Private vulnerability reporting procedure. |
+| `CI.md` | Shape and rules of every repository's `ci.yml`, the `Quality Gate` contract. |
+| `workflow-templates/` | Organisation workflow templates `ci-common`, `ci-node`, `ci-flutter`, `ci-openapi`, `ci-ansible` (Actions > New workflow). |
+| `templates/lint/` | Default `.yamllint.yml` and `.markdownlint-cli2.yaml` copied to each repository root. |
 
 ## Inheritance by the other repositories
 

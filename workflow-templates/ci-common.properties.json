@@ -1,0 +1,12 @@
+{
+  "name": "SchoolEngine CI: common",
+  "description": "Quality Gate for docs and configuration repositories: PR title and linked issue, gitleaks, actionlint, yamllint, markdownlint, osv-scanner.",
+  "categories": [
+    "Continuous integration",
+    "Markdown",
+    "YAML"
+  ],
+  "filePatterns": [
+    "README\\.md$"
+  ]
+}
