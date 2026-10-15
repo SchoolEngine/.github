@@ -17,6 +17,8 @@ Organization-level files of SchoolEngine.
 | `.github/workflows/ci.yml` | CI of this repository, from the `ci-common` template: produces the `Quality Gate` check. |
 | `.github/dependabot.yml` | Dependabot configuration of this repository, from the `common` template (`github-actions`). |
 | `.yamllint.yml`, `.markdownlint-cli2.yaml` | Lint configuration of this repository, copies of `templates/lint/`. |
+| `rulesets/` | Organisation rulesets as code (`protect-develop.json`: protection of every default branch, required `Quality Gate` check) and how to change them. |
+| `scripts/apply-ruleset.sh` | Compares a ruleset file with the live ruleset (dry-run by default) and applies it with `--apply`. |
 
 ## Inheritance by the other repositories
 
