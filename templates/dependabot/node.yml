@@ -63,3 +63,12 @@ updates:
     # change procedure, not by Dependabot, until ADR-013 says otherwise.
     ignore:
       - dependency-name: "@usc/api-client"
+      # @types/node follows the Node.js runtime we pin (Node 24 LTS): a newer
+      # major describes APIs that do not exist at runtime. Move it with the LTS.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # TypeScript stays on 6.0.x in every repository: typescript-eslint supports
+      # TypeScript < 6.1 only. Lift this rule when it supports TypeScript 7, and
+      # bump every repository together. Minor, patch and security updates still come.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
