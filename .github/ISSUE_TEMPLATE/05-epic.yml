@@ -1,0 +1,67 @@
+name: Epic (lot)
+description: The technical epic of a lot. Open it in SchoolEngine/architecture; every development ticket of the lot is one of its sub-issues.
+title: "epic(lot-L<n>): <lot name>"
+labels: ["epic"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One epic per lot, in `SchoolEngine/architecture`. Development tickets are attached as native sub-issues; their progress is read from the epic.
+  - type: input
+    id: lot_card
+    attributes:
+      label: Lot card
+      description: URL of the lot card that tracks acceptance of this lot.
+      placeholder: https://github.com/SoutienScolaireApp/docs/issues/11
+    validations:
+      required: true
+  - type: input
+    id: spec_reference
+    attributes:
+      label: Spec reference
+      description: Roadmap phase and sections of the founding specification covered by the lot.
+      placeholder: "§36 Phase 0, §25 to §28"
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What the lot delivers, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: In scope and explicitly out of scope.
+      value: |
+        In scope:
+        - 
+
+        Out of scope:
+        - 
+    validations:
+      required: true
+  - type: textarea
+    id: sequencing
+    attributes:
+      label: Sequencing
+      description: Decisions already taken and the dependency graph between the sub-issues. Fill it once the sub-issues exist.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What must be demonstrated for the lot to be accepted.
+      value: |
+        - [ ] 
+    validations:
+      required: true
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of Done
+      value: |
+        Every sub-issue closed, acceptance criteria demonstrated on staging, repo map and documentation up to date.
+    validations:
+      required: true
