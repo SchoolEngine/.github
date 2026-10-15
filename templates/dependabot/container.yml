@@ -5,8 +5,8 @@
 version: 2
 
 updates:
-  # Base images (FROM lines), pinned by digest (ADR-014). Dependabot looks for
-  # files named Dockerfile; see DEPENDABOT.md for Containerfile.
+  # Base images (FROM lines) of the Containerfile, pinned by digest (ADR-014).
+  # Dependabot reads files named Containerfile as well as Dockerfile.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

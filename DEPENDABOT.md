@@ -15,7 +15,7 @@ SchoolEngine repositories keep their dependencies up to date with Dependabot ver
 
 1. **Each repository's CI ticket** copies `common.yml` to `.github/dependabot.yml`, in the same PR as its `ci.yml`.
 2. **Each scaffold ticket** switches to `node.yml` or `flutter.yml` in the PR that commits the manifest and its lockfile (`package.json` + `pnpm-lock.yaml`, `pubspec.yaml` + `pubspec.lock`). An ecosystem is never declared before its manifest exists: Dependabot reports an error for it.
-3. A repository that adds a `Containerfile` or `Dockerfile` appends the entry of `container.yml` to its `updates:` list.
+3. A repository that builds an image names its image file `Containerfile` (Podman's name, read by Dependabot's `docker` ecosystem like `Dockerfile`) and appends the entry of `container.yml` to its `updates:` list.
 
 Keep the shared settings below when adapting a template; a different `directory` (for example a workspace package) is the only expected change.
 
@@ -38,7 +38,6 @@ Tool versions downloaded inside CI steps (gitleaks, osv-scanner, actionlint, oas
 
 `@usc/api-client` and `usc_api_client` are git-tag dependencies on the private `contracts` repository (ADR-013, SchoolEngine/architecture#6). The templates **ignore** them: they are bumped by the contract change procedure (a PR per consumer after a new contracts tag), not by Dependabot. If ADR-013 shows that Dependabot can propose those tag bumps, remove the `ignore` entry; Dependabot then also needs read access to `contracts` (organisation setting "Grant Dependabot access to private repositories").
 
-## Known limits to check in the scaffold tickets
+## pnpm version
 
-- The `docker` ecosystem looks for files named `Dockerfile`. Whether it reads a file named `Containerfile` is to be checked in the first repository that builds an image; if it does not, name the file `Dockerfile` (Podman reads both).
-- GitHub documents pnpm support for a fixed range of pnpm major versions: check that the version pinned in `packageManager` is supported.
+GitHub documents Dependabot support for pnpm v7 to v10. Each pnpm repository pins a supported major in the `packageManager` field of `package.json` (`pnpm@10.34.6` on 2026-10-15) and moves to a newer major only once GitHub lists it.
