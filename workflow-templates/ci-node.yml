@@ -259,7 +259,7 @@ jobs:
   # of package.json: pin a pnpm major that Dependabot supports (pnpm@10.34.6
   # on 2026-10-15; GitHub documents v7 to v10).
   node:
-    name: Node (lint, typecheck, test, build)
+    name: Node (format, lint, typecheck, test, build)
     # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
     # Future: runs-on: [self-hosted, Linux, X64, node]
     runs-on: ubuntu-latest
@@ -282,6 +282,12 @@ jobs:
 
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
+
+      # Prettier is blocking (spec §24). `format:check` is `prettier --check .`;
+      # .prettierignore keeps *.md, *.yml and *.yaml out of it: yamllint and
+      # markdownlint-cli2 govern them (CI.md, "Formatting").
+      - name: Format check
+        run: pnpm run format:check
 
       - name: Lint
         run: pnpm run lint
