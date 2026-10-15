@@ -49,7 +49,7 @@ The templates are only offered from the default branch (`develop`) of this repos
 
 ## The Quality Gate
 
-`Quality Gate` is the **single required check** of `develop`. It is required by the organisation ruleset `protect-develop` (SchoolEngine/.github#5), which names the check, not the workflow: every repository must produce a check called exactly `Quality Gate`.
+`Quality Gate` is the **single required check** of `develop`. It is required by the organisation ruleset `protect-develop` (kept as code in [`rulesets/protect-develop.json`](rulesets/protect-develop.json), see [`rulesets/README.md`](rulesets/README.md)), which names the check and its source (GitHub Actions, integration id 15368), not the workflow: every repository must produce a check called exactly `Quality Gate`, or none of its PRs can be merged. The branch does not have to be up to date with `develop` before merging (non-strict policy).
 
 Rules, all learned on TheOpenMusicBox:
 
