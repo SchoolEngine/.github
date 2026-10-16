@@ -7,7 +7,7 @@ Every SchoolEngine repository owns one workflow, `.github/workflows/ci.yml`, cop
 | Template | For | Jobs on top of the common ones |
 |---|---|---|
 | [`ci-common`](workflow-templates/ci-common.yml) | Docs and configuration repositories (`architecture`, `.github`) | none |
-| [`ci-node`](workflow-templates/ci-node.yml) | pnpm repositories (`backend`, `parent-web`, `admin-web`) | `node`: frozen install, lint, typecheck, tests with a coverage floor (`COVERAGE_MIN`: 80 % for `backend`, 70 % for `parent-web` and `admin-web`), build |
+| [`ci-node`](workflow-templates/ci-node.yml) | pnpm repositories (`backend`, `parent-web`, `admin-web`) | `node`: frozen install, format check (Prettier), lint, typecheck, tests with a coverage floor (`COVERAGE_MIN`: 80 % for `backend`, 70 % for `parent-web` and `admin-web`), build |
 | [`ci-flutter`](workflow-templates/ci-flutter.yml) | `mobile-app` | `flutter`: pinned SDK (checksum verified), enforced lockfile, `dart format --set-exit-if-changed`, `flutter analyze`, `flutter test --coverage`, coverage floor 70 % |
 | [`ci-openapi`](workflow-templates/ci-openapi.yml) | `contracts` | `openapi-lint` (Spectral 6.16.3 standalone binary, checksum verified, rule set `.spectral.yaml` from `templates/openapi/`, warnings block), `oasdiff` (breaking changes against the base branch), `generation-drift` (`git status` must stay clean after regeneration) |
 | [`ci-ansible`](workflow-templates/ci-ansible.yml) | `infrastructure` | `ansible`: pinned ansible-core and ansible-lint, `--syntax-check` of every playbook; `sops`: every `*.sops.*` file is encrypted |
@@ -30,6 +30,7 @@ Placeholders that a scaffold ticket must fill are marked `TODO(scaffold)` in the
 1. In the repository, open **Actions > New workflow**: the templates are listed in the section of workflows created by SchoolEngine. If they are not shown, copy the file by hand: `workflow-templates/ci-<variant>.yml` to `.github/workflows/ci.yml`.
 2. Copy `templates/lint/.yamllint.yml` and `templates/lint/.markdownlint-cli2.yaml` to the repository root (and, for `contracts`, `templates/openapi/.spectral.yaml`). The lint jobs refuse to run without them.
    For a pnpm repository, pin pnpm in the `packageManager` field of `package.json` to a major that Dependabot supports (GitHub documents pnpm v7 to v10; `pnpm@10.34.6` on 2026-10-15).
+   For a pnpm repository, also define the scripts the `node` job calls (`format:check` = `prettier --check .`, `lint`, `typecheck`, `test:coverage`, `build`) and keep YAML and Markdown out of Prettier (see [Formatting](#formatting)).
 3. Fill the `TODO(scaffold)` placeholders, open the pull request, and check that every job, then `Quality Gate`, is green.
 
 The templates are only offered from the default branch (`develop`) of this repository, once merged.
@@ -59,6 +60,19 @@ Rules, all learned on TheOpenMusicBox:
 - A cancelled run leaves the gate `cancelled`, which blocks the merge: re-run the workflow.
 - **Adding a job**: add it under `jobs:` with the fork guard and a `timeout-minutes`, then add its id to the `needs:` list of `quality-gate`. Nothing else: the gate reads the results of `needs` generically. A job missing from `needs:` does not block anything.
 - Removing a job: remove it from `needs:` in the same PR.
+
+## Formatting
+
+One formatter of record per file type, all blocking:
+
+| Files | Tool | Job |
+| --- | --- | --- |
+| YAML | yamllint `--strict` (`.yamllint.yml`) | `lint-yaml-markdown` |
+| Markdown | markdownlint-cli2 (`.markdownlint-cli2.yaml`) | `lint-yaml-markdown` |
+| TypeScript, JavaScript, JSON, CSS, HTML (pnpm repositories) | Prettier, `pnpm run format:check` | `node` (`Format check`) |
+| Dart | `dart format --set-exit-if-changed` | `flutter` (`Format`) |
+
+In a pnpm repository, `.prettierignore` lists `*.md`, `*.yml` and `*.yaml` (plus the lockfile and build outputs). Prettier would otherwise judge them a second time with a different rule set: a Markdown file that markdownlint accepts can fail `Format check`, and Dependabot PRs, which rewrite `.github/` YAML, would fail on a rule nobody chose. In `parent-web` an unformatted `CLAUDE.md` merged from a branch older than the `node` job turned `develop` red for every PR (SchoolEngine/parent-web#12).
 
 ## Security rules (ADR-014)
 
