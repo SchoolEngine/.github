@@ -185,7 +185,7 @@ check_osv_toml() {
 }
 
 check_ignores() {
-  local base_dir=$1 head_dir=$2 path
+  local base_dir=$1 head_dir=$2 path base_file
   local -a paths=()
   while IFS= read -r path; do
     paths+=("$path")
@@ -196,15 +196,17 @@ check_ignores() {
   while IFS= read -r path; do
     [[ -n "$path" && ! -f "$head_dir/$path" ]] || continue
     echo "::notice::$path was removed by this PR."
-  done < <(cd "$base_dir" && find . -type f -print 2>/dev/null | sed 's|^\./||' | grep -E '(^|/)osv-scanner\.toml$|^\.gitleaks(\.toml|ignore)$' || true)
+  done < <(find "$base_dir" -type f -print | sed "s|^$base_dir/||" \
+             | { grep -E '(^|/)osv-scanner\.toml$|^\.gitleaks(\.toml|ignore)$' || true; })
 
   for path in "${paths[@]}"; do
     if [[ -f "$base_dir/$path" ]] && cmp -s "$base_dir/$path" "$head_dir/$path"; then
       :
     else
       echo "Changes to $path:"
-      diff -u --label "base: $path" --label "pr: $path" \
-        "$( [[ -f "$base_dir/$path" ]] && echo "$base_dir/$path" || echo /dev/null)" "$head_dir/$path" || true
+      base_file=/dev/null
+      [[ ! -f "$base_dir/$path" ]] || base_file="$base_dir/$path"
+      diff -u --label "base: $path" --label "pr: $path" "$base_file" "$head_dir/$path" || true
     fi
     case "$path" in
       .gitleaksignore) check_gitleaksignore "$head_dir/$path" ;;
