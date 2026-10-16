@@ -23,11 +23,24 @@ The file holds only the fields accepted by the API (`name`, `target`, `enforceme
    scripts/apply-ruleset.sh --apply rulesets/protect-develop.json
    ```
 
-   The script is idempotent (a second run reports nothing to do) and refuses any file that declares a bypass actor. The equivalent raw call is `gh api -X PUT orgs/SchoolEngine/rulesets/25146431 --input rulesets/protect-develop.json`.
+   The script is idempotent (a second run reports nothing to do). It refuses a file without a `bypass_actors` key (`[]` for none: without the key, a `PUT` keeps the live bypass list and the file stops describing the ruleset), and a file that declares bypass actors unless `--allow-bypass` is given (`protect-develop` has none by design). The equivalent raw call is `gh api -X PUT orgs/SchoolEngine/rulesets/25146431 --input rulesets/protect-develop.json`.
 
 4. Check the result on one repository: `gh api repos/SchoolEngine/backend/rules/branches/develop`.
 
 If the live ruleset was changed outside this process, export it back (`gh api orgs/SchoolEngine/rulesets/25146431 | jq '{name, target, enforcement, bypass_actors, conditions, rules}'`) and open a PR so the file matches again.
+
+## Repository rulesets
+
+A repository keeps its own rulesets as code in its `rulesets/` folder (for example `protect-release-tags` in `SchoolEngine/contracts`). The same script handles them with `--repo`, run from a checkout of this repository (repository administrator only for `--apply`):
+
+```bash
+scripts/apply-ruleset.sh --repo SchoolEngine/contracts ../contracts/rulesets/protect-release-tags.json
+scripts/apply-ruleset.sh --apply --repo SchoolEngine/contracts ../contracts/rulesets/protect-release-tags.json
+```
+
+It then reads `repos/<owner>/<repo>/rulesets?includes_parents=false` (never an inherited organisation ruleset), and updates `repos/<owner>/<repo>/rulesets/<id>` or creates the ruleset on the repository. The same rules apply: dry-run by default, `bypass_actors` required, `--allow-bypass` for a file that declares bypass actors.
+
+The script is tested without network by `tests/apply-ruleset/run.sh` (a `gh` stub).
 
 ## Why `strict_required_status_checks_policy` is true
 
