@@ -21,6 +21,7 @@ Common jobs, in every template:
 | `actionlint` | Workflows (actionlint) | any actionlint or shellcheck finding in the workflows |
 | `lint-yaml-markdown` | YAML and Markdown lint | yamllint (`--strict`) or markdownlint finding |
 | `osv-scanner` | Vulnerable dependencies (osv-scanner) | a high or critical vulnerability (CVSS 7.0 or more), or one without a score, in a committed lockfile |
+| `gate-integrity` | Gate integrity | a weakened gate or an unjustified ignore, see [Gate integrity](#gate-integrity) |
 | `quality-gate` | **Quality Gate** | any job above that did not succeed |
 
 Placeholders that a scaffold ticket must fill are marked `TODO(scaffold)` in the templates. They fail closed: an unfilled template is red, never green on nothing.
@@ -45,7 +46,7 @@ The templates are only offered from the default branch (`develop`) of this repos
 - `timeout-minutes` on every job.
 - `actions/checkout` always with `persist-credentials: false`.
 - Third-party actions pinned by full commit SHA with a `# owner/action@vX.Y.Z` comment (enforced by the organisation). No wrapper action for the security tools.
-- Tool versions pinned in the workflow `env:` block, one place per template. gitleaks, actionlint, osv-scanner and oasdiff come from their GitHub releases and are verified against the published checksum file before running; the Spectral binary against a pinned sha256 (its release publishes no checksum file; the value is the asset digest shown by GitHub); the Flutter SDK archive against the sha256 of the Flutter release index.
+- Tool versions pinned in the workflow `env:` block, one place per template. gitleaks, actionlint, osv-scanner, yq and oasdiff come from their GitHub releases and are verified against the published checksum file before running; the Spectral binary against a pinned sha256 (its release publishes no checksum file; the value is the asset digest shown by GitHub); the Flutter SDK archive against the sha256 of the Flutter release index.
 - PR title, body and labels never appear in a `${{ }}` expression inside `run:` (script injection): they are fetched by the script and kept in shell variables.
 
 ## The Quality Gate
@@ -59,7 +60,46 @@ Rules, all learned on TheOpenMusicBox:
 - It `needs:` **every other job** and fails unless every needed result is `success`. A `skipped` or `cancelled` job fails the gate.
 - A cancelled run leaves the gate `cancelled`, which blocks the merge: re-run the workflow.
 - **Adding a job**: add it under `jobs:` with the fork guard and a `timeout-minutes`, then add its id to the `needs:` list of `quality-gate`. Nothing else: the gate reads the results of `needs` generically. A job missing from `needs:` does not block anything.
-- Removing a job: remove it from `needs:` in the same PR.
+- Removing a job: remove it from `needs:` in the same PR. It is a gate change (next section).
+
+## Gate integrity
+
+The gate lives in each PR's own `ci.yml` and `protect-develop` requires no approving review, so nothing structural stops a PR from weakening it. `Gate integrity` is the detective control decided by Céline on 2026-10-16 (SchoolEngine/.github#22) instead of mandatory approvals. It runs `.github/scripts/gate-integrity.sh`, a file copied as is into every repository, and **always the copy of the base branch**: a PR is never judged by its own version of the checker (the PR's copy is used only while the base branch has none, during the rollout).
+
+It compares the PR with the base branch (`git show <base>:.github/workflows/ci.yml`) and fails on:
+
+| Finding | Accepted with a `## Gate change` section? |
+|---|---|
+| A common job missing (`pr-conventions`, `gitleaks`, `actionlint`, `lint-yaml-markdown`, `osv-scanner`, `gate-integrity`), or `quality-gate` missing or renamed | no |
+| The gate's `if:` not exactly `${{ !cancelled() }}` | no |
+| A job not in the gate's `needs:` | no |
+| `continue-on-error` anywhere (a failing job or step would pass the gate) | no |
+| An ignore without justification and expiry date (see [Ignore files](#ignore-files)) | no |
+| A job of the base branch removed | yes |
+| The definition of a common job or of the gate changed (action SHAs aside, so Dependabot bumps pass; the gate's `needs:` aside, so adding a job passes) | yes |
+| `.gitleaks.toml` without `[extend] useDefault = true`, or with `disabledRules` | yes |
+
+It also runs `actionlint` on the PR's workflows (blocking) and on the base branch `ci.yml` (informational: a red base must not block the PR that fixes it), and prints the diff of every ignore file the PR touches.
+
+**A gate change** is accepted only when the PR title type is `ci` **and** its body has a `## Gate change` section that justifies it (an HTML comment alone does not count). Such a PR gets the **double agent review** (one of them on security) and **Céline's explicit approval** before merge; the job flags it as a warning and in the run summary. Adding `Gate integrity` to an existing repository is itself a gate change (the rollout PR changes the gate).
+
+The control is detective, not preventive: a PR can still rewrite its own `gate-integrity` job, but that rewrite is a visible diff of `ci.yml`, a gate change for the next PR's checker, and a reason to refuse the merge.
+
+### Ignore files
+
+Every ignore carries a justification and an expiry date (ADR-014):
+
+- `osv-scanner.toml` (any directory: osv-scanner reads the one next to each lockfile): each `[[IgnoredVulns]]` has `reason` and `ignoreUntil`; each `[[PackageOverrides]]` that ignores has `reason` and `effectiveUntil`. osv-scanner itself stops ignoring after the date.
+- `.gitleaksignore`: each fingerprint is preceded by a comment `# <justification> expires: YYYY-MM-DD`. gitleaks has no expiry of its own, so the job fails once the date is past: remove the entry or renew it with a new justification.
+- `.gitleaks.toml`: extends the default rules (`[extend] useDefault = true`); each allowlist (top level or in a rule) has a `description` ending with `expires: YYYY-MM-DD`, enforced the same way.
+
+```toml
+[[allowlists]]
+description = "Synthetic keys of the test fixtures, not secrets. expires: 2027-01-31"
+paths = ['''tests/fixtures/keys/''']
+```
+
+The tests of the checker live in this repository (`tests/gate-integrity/run.sh`, run by the `scripts` job of its own `ci.yml`). To change the checker: change it and its tests here, then copy it into each repository in a `ci` PR.
 
 ## Formatting
 
@@ -76,7 +116,7 @@ In a pnpm repository, `.prettierignore` lists `*.md`, `*.yml` and `*.yaml` (plus
 
 ## Security rules (ADR-014)
 
-- **A gitleaks finding means the secret is compromised**: it has already been pushed. Rotate it first, then remove it from the branch. `.gitleaksignore` and inline `gitleaks:allow` are used only for proven false positives, justified in the PR.
+- **A gitleaks finding means the secret is compromised**: it has already been pushed. Rotate it first, then remove it from the branch. `.gitleaksignore` and inline `gitleaks:allow` are used only for proven false positives, justified in the PR; `.gitleaksignore` entries and allowlists also carry an expiry date ([Ignore files](#ignore-files)).
 - **osv-scanner** blocks on high and critical findings, and on findings without a severity score. Moderate and low findings are left to Dependabot alerts. A finding with no available fix may be ignored only in `osv-scanner.toml` (`[[IgnoredVulns]]` with `reason` and `ignoreUntil`), reviewed in the PR. `pnpm audit` is a local command, never a CI check.
 - **Dependabot PRs** are exempt from the `Closes #n` check only (author `dependabot[bot]`); their `chore(deps): ...` titles pass the title check like any other.
 - Before any mirror or migration of a repository, run `gitleaks git` on the whole history.
@@ -87,4 +127,4 @@ Versions downloaded in `run:` steps are not seen by Dependabot. To bump one: cha
 
 ## Runners: GitHub-hosted now, self-hosted later
 
-Jobs run on `ubuntu-latest` until the self-hosted lanes exist (SchoolEngine/infrastructure#12, ADR-011). Each `runs-on:` carries a comment with its future value, `[self-hosted, Linux, X64, <lane>]`. The switch is a one-line change per job and does not touch the gate. Tools are installed by the jobs themselves (no reliance on the preinstalled software of the GitHub image, except `jq`, `curl` and `shellcheck`), so the same file runs on a self-hosted lane, and later on Forgejo Actions.
+Jobs run on `ubuntu-latest` until the self-hosted lanes exist (SchoolEngine/infrastructure#12, ADR-011). Each `runs-on:` carries a comment with its future value, `[self-hosted, Linux, X64, <lane>]`. The switch is a one-line change per job and does not touch the gate. Tools are installed by the jobs themselves (no reliance on the preinstalled software of the GitHub image, except `jq`, `curl`, `git` and `shellcheck`), so the same file runs on a self-hosted lane, and later on Forgejo Actions.

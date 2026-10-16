@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated client test vectors, not secrets. expires: 2026-12-31"
+paths = ['''clients/dart/test/vectors/''']

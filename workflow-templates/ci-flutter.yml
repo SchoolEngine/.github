@@ -27,6 +27,7 @@ concurrency:
 env:
   GITLEAKS_VERSION: '8.30.1'
   ACTIONLINT_VERSION: '1.7.12'
+  YQ_VERSION: '4.54.1'
   OSV_SCANNER_VERSION: '2.7.0'
   YAMLLINT_VERSION: '1.38.0'
   MARKDOWNLINT_CLI2_VERSION: '0.23.3'
@@ -327,6 +328,77 @@ jobs:
             exit 1
           fi
 
+  # Detective control of the gate itself (CI.md, "Gate integrity"): compares
+  # this ci.yml and the ignore files with the base branch. It runs the BASE
+  # branch copy of .github/scripts/gate-integrity.sh, never the PR's own copy.
+  gate-integrity:
+    name: Gate integrity
+    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
+    # Future: runs-on: [self-hosted, Linux, X64, <lane>]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout with history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python (tomllib)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install yq and actionlint (pinned, checksum verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
+          base="https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}"
+          curl -fsSLO "$base/yq_linux_amd64"
+          curl -fsSLO "$base/checksums-bsd"
+          awk '$1 == "SHA256" && $2 == "(yq_linux_amd64)" { print $4 "  yq_linux_amd64" }' checksums-bsd \
+            | sha256sum --check --strict -
+          install -m 0755 yq_linux_amd64 "$RUNNER_TEMP/bin/yq"
+          base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          sums="actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          curl -fsSLO "$base/$archive"
+          curl -fsSLO "$base/$sums"
+          awk -v f="$archive" '$2 == f' "$sums" | sha256sum --check --strict -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/bin" actionlint
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Check the gate against the base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Title and body only for the `## Gate change` exception: fetched
+          # live, kept in variables, never interpolated into the script.
+          pr_json=$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${REPO}/pulls/${PR_NUMBER}")
+          PR_TITLE=$(jq -r '.title' <<<"$pr_json")
+          PR_BODY=$(jq -r '.body // ""' <<<"$pr_json")
+          export PR_TITLE PR_BODY
+
+          checker="$RUNNER_TEMP/gate-integrity.sh"
+          if git cat-file -e "${BASE_SHA}:.github/scripts/gate-integrity.sh" 2>/dev/null; then
+            git show "${BASE_SHA}:.github/scripts/gate-integrity.sh" > "$checker"
+          else
+            echo "::warning::No gate-integrity.sh on the base branch yet (rollout PR): using the PR's copy."
+            cp .github/scripts/gate-integrity.sh "$checker"
+          fi
+          bash "$checker" ci "$BASE_SHA"
+
   # The single required check. Its `if:` is exactly `!cancelled()` and nothing
   # else: a false condition skips the job and a skipped required check counts
   # as passing. No fork guard here on purpose: on a fork PR every job above is
@@ -337,7 +409,7 @@ jobs:
     # Future: runs-on: [self-hosted, Linux, X64, <lane>]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [pr-conventions, gitleaks, actionlint, lint-yaml-markdown, osv-scanner, flutter]
+    needs: [pr-conventions, gitleaks, actionlint, lint-yaml-markdown, osv-scanner, gate-integrity, flutter]
     if: ${{ !cancelled() }}
     steps:
       - name: Require every job to succeed

@@ -1,0 +1,11 @@
+[[IgnoredVulns]]
+id = "GHSA-aaaa-bbbb-cccc"
+ignoreUntil = 2026-12-31
+reason = "No fixed version yet; the vulnerable function is not called."
+
+[[PackageOverrides]]
+name = "left-pad"
+ecosystem = "npm"
+ignore = true
+effectiveUntil = 2026-12-31
+reason = "Test-only dependency, never shipped."

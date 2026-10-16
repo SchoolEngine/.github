@@ -18,6 +18,7 @@ Organization-level files of SchoolEngine.
 | `.github/dependabot.yml` | Dependabot configuration of this repository, from the `common` template (`github-actions`). |
 | `.yamllint.yml`, `.markdownlint-cli2.yaml` | Lint configuration of this repository, copies of `templates/lint/`. |
 | `rulesets/` | Organisation rulesets as code (`protect-develop.json`: protection of every default branch, required `Quality Gate` check) and how to change them. |
+| `.github/scripts/gate-integrity.sh` | Checker of the `Gate integrity` job, copied into every repository; tests in `tests/gate-integrity/`. |
 | `scripts/apply-ruleset.sh` | Compares a ruleset file with the live ruleset (dry-run by default) and applies it with `--apply`. |
 
 ## Inheritance by the other repositories

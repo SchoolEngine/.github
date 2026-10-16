@@ -1,0 +1,2 @@
+# Synthetic key of a test fixture, not a secret. expires: 2026-01-31
+3f2a1b0c:tests/fixtures/key.pem:private-key:1
