@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "GHSA-aaaa-bbbb-cccc"
+ignoreUntil = 2026-12-31
+reason = "Not used."

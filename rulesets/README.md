@@ -4,7 +4,7 @@ Organisation rulesets of SchoolEngine, kept as code. The JSON file is the source
 
 | File | Ruleset | What it enforces |
 |---|---|---|
-| `protect-develop.json` | `protect-develop` (id 25146431) | Default branch of every repository: no deletion, no force-push, linear history, PR required (squash only, review threads resolved, stale approvals dismissed), required check `Quality Gate` (GitHub Actions, integration id 15368, branch required to be up to date with `develop`). No bypass actor. |
+| `protect-develop.json` | `protect-develop` (id 25146431) | Default branch of every repository: no deletion, no force-push, linear history, PR required (squash only, review threads resolved, stale approvals dismissed), required checks `Quality Gate` and `Gate integrity` (GitHub Actions, integration id 15368, branch required to be up to date with `develop`). No bypass actor. `Gate integrity` is in the file before it is live: see [Enabling the Gate integrity check](#enabling-the-gate-integrity-check). |
 
 The file holds only the fields accepted by the API (`name`, `target`, `enforcement`, `bypass_actors`, `conditions`, `rules`): no `id`, timestamps, `_links`, `node_id` or `source`. It can be re-imported as is, with `PUT` on the existing ruleset or `POST` on a new organisation.
 
@@ -37,3 +37,32 @@ The cost: after every merge, the other open PRs of the repository are out of dat
 
 - Use the **Update branch** button of the PR, or `gh pr update-branch <n>` (`--rebase` to rebase instead of merging `develop` in; both are fine, the PR is squashed anyway).
 - **Dependabot PRs are rebased by Dependabot itself**: comment `@dependabot rebase` on the PR (it also rebases on its own when the PR conflicts). Do not use Update branch on them: once someone else pushes to a Dependabot branch, Dependabot stops updating that PR.
+
+## Enabling the Gate integrity check
+
+`Gate integrity` (SchoolEngine/.github#22, [CI.md](../CI.md#gate-integrity)) was added to `protect-develop.json` before it is applied, the one deliberate gap between the file and the live ruleset. A required check that a repository never reports blocks every merge there, and a `pull_request_target` workflow only runs once it is on the default branch. So the order is fixed:
+
+1. Merge SchoolEngine/.github#24.
+2. In every repository, a rollout PR adds `.github/workflows/gate-integrity.yml` and `.github/scripts/gate-integrity.sh` (copies from this repository) and creates the label: `gh label create gate-change-approved -R SchoolEngine/<repo> --color B60205 --description "Gate change approved (CI.md, Gate integrity)"`. The rollout PR itself gets no `Gate integrity` run (the workflow is not on `develop` yet).
+3. An organisation owner sets the approvers (logins, comma separated): `gh variable set GATE_CHANGE_APPROVERS --org SchoolEngine --visibility all --body "<login>"`.
+4. Check that every repository has both files on `develop` (each line must say `ok`):
+
+   ```bash
+   for r in $(gh repo list SchoolEngine --no-archived --json name --jq '.[].name'); do
+     for f in .github/workflows/gate-integrity.yml .github/scripts/gate-integrity.sh; do
+       gh api "repos/SchoolEngine/$r/contents/$f?ref=develop" --silent 2>/dev/null \
+         && echo "ok      $r $f" || echo "MISSING $r $f"
+     done
+   done
+   ```
+
+5. Céline (organisation owner) applies the ruleset: the dry-run must show only the added `Gate integrity` check, then `--apply`:
+
+   ```bash
+   scripts/apply-ruleset.sh rulesets/protect-develop.json
+   scripts/apply-ruleset.sh --apply rulesets/protect-develop.json
+   ```
+
+6. Check on one repository: `gh api repos/SchoolEngine/backend/rules/branches/develop --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks'` lists both checks.
+
+Rollback: remove the `Gate integrity` entry from the file in a PR and apply it again.

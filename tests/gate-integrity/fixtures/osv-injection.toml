@@ -1,0 +1,3 @@
+[[IgnoredVulns]]
+id = "GHSA-x\n::error::injected annotation"
+reason = "short"

@@ -19,8 +19,8 @@ Closes #
 <!-- The points a reviewer should look at first: risky logic, security, decisions taken in the PR, open questions. -->
 
 <!--
-Gate change only (a CI job removed, a common job or the Quality Gate changed, gitleaks loosened):
-use a `ci` title and add a `## Gate change` section with the justification (CI.md, Gate integrity).
+Gate change only (a CI job removed, a common job, the Quality Gate or a workflow changed, gitleaks loosened):
+add a `## Gate change` section with the justification; an approver applies the `gate-change-approved` label after review (CI.md, Gate integrity).
 -->
 
 ## Contract impact

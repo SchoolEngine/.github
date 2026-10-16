@@ -26,12 +26,16 @@ concurrency:
   cancel-in-progress: true
 
 # Tool versions: one place per template. Run-step downloads are not seen by
-# Dependabot: bump them here by hand (ADR-014).
+# Dependabot: bump them here by hand (ADR-014). Each *_SHA256 is the sha256
+# of the linux amd64 release asset, pinned here and bumped with the version
+# (never read from a checksum file of the same release).
 env:
   GITLEAKS_VERSION: '8.30.1'
+  GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
   ACTIONLINT_VERSION: '1.7.12'
-  YQ_VERSION: '4.54.1'
+  ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
   OSV_SCANNER_VERSION: '2.7.0'
+  OSV_SCANNER_SHA256: '160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b'
   YAMLLINT_VERSION: '1.38.0'
   MARKDOWNLINT_CLI2_VERSION: '0.23.3'
   PYTHON_VERSION: '3.13'
@@ -107,16 +111,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install gitleaks (pinned, checksum verified)
+      - name: Install gitleaks (pinned, sha256 verified)
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
           archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          sums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
           curl -fsSLO "$base/$archive"
-          curl -fsSLO "$base/$sums"
-          awk -v f="$archive" '$2 == f' "$sums" | sha256sum --check --strict -
+          echo "${GITLEAKS_SHA256}  $archive" | sha256sum --check --strict -
           tar -xzf "$archive" -C "$RUNNER_TEMP/bin" gitleaks
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
@@ -141,16 +143,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install actionlint (pinned, checksum verified)
+      - name: Install actionlint (pinned, sha256 verified)
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
           base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
           archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          sums="actionlint_${ACTIONLINT_VERSION}_checksums.txt"
           curl -fsSLO "$base/$archive"
-          curl -fsSLO "$base/$sums"
-          awk -v f="$archive" '$2 == f' "$sums" | sha256sum --check --strict -
+          echo "${ACTIONLINT_SHA256}  $archive" | sha256sum --check --strict -
           tar -xzf "$archive" -C "$RUNNER_TEMP/bin" actionlint
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
@@ -216,15 +216,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install osv-scanner (pinned, checksum verified)
+      - name: Install osv-scanner (pinned, sha256 verified)
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
           base="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}"
           binary="osv-scanner_linux_amd64"
           curl -fsSLO "$base/$binary"
-          curl -fsSLO "$base/osv-scanner_SHA256SUMS"
-          awk -v f="$binary" '$2 == f' osv-scanner_SHA256SUMS | sha256sum --check --strict -
+          echo "${OSV_SCANNER_SHA256}  $binary" | sha256sum --check --strict -
           install -m 0755 "$binary" "$RUNNER_TEMP/bin/osv-scanner"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
@@ -352,77 +351,6 @@ jobs:
           echo "$count sops file(s) checked."
           exit "$status"
 
-  # Detective control of the gate itself (CI.md, "Gate integrity"): compares
-  # this ci.yml and the ignore files with the base branch. It runs the BASE
-  # branch copy of .github/scripts/gate-integrity.sh, never the PR's own copy.
-  gate-integrity:
-    name: Gate integrity
-    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
-    # Future: runs-on: [self-hosted, Linux, X64, <lane>]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Checkout with history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up Python (tomllib)
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # actions/setup-python@v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install yq and actionlint (pinned, checksum verified)
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
-          base="https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}"
-          curl -fsSLO "$base/yq_linux_amd64"
-          curl -fsSLO "$base/checksums-bsd"
-          awk '$1 == "SHA256" && $2 == "(yq_linux_amd64)" { print $4 "  yq_linux_amd64" }' checksums-bsd \
-            | sha256sum --check --strict -
-          install -m 0755 yq_linux_amd64 "$RUNNER_TEMP/bin/yq"
-          base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          sums="actionlint_${ACTIONLINT_VERSION}_checksums.txt"
-          curl -fsSLO "$base/$archive"
-          curl -fsSLO "$base/$sums"
-          awk -v f="$archive" '$2 == f' "$sums" | sha256sum --check --strict -
-          tar -xzf "$archive" -C "$RUNNER_TEMP/bin" actionlint
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-      - name: Check the gate against the base branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          # Title and body only for the `## Gate change` exception: fetched
-          # live, kept in variables, never interpolated into the script.
-          pr_json=$(curl -fsSL \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "${GITHUB_API_URL}/repos/${REPO}/pulls/${PR_NUMBER}")
-          PR_TITLE=$(jq -r '.title' <<<"$pr_json")
-          PR_BODY=$(jq -r '.body // ""' <<<"$pr_json")
-          export PR_TITLE PR_BODY
-
-          checker="$RUNNER_TEMP/gate-integrity.sh"
-          if git cat-file -e "${BASE_SHA}:.github/scripts/gate-integrity.sh" 2>/dev/null; then
-            git show "${BASE_SHA}:.github/scripts/gate-integrity.sh" > "$checker"
-          else
-            echo "::warning::No gate-integrity.sh on the base branch yet (rollout PR): using the PR's copy."
-            cp .github/scripts/gate-integrity.sh "$checker"
-          fi
-          bash "$checker" ci "$BASE_SHA"
-
   # The single required check. Its `if:` is exactly `!cancelled()` and nothing
   # else: a false condition skips the job and a skipped required check counts
   # as passing. No fork guard here on purpose: on a fork PR every job above is
@@ -433,7 +361,7 @@ jobs:
     # Future: runs-on: [self-hosted, Linux, X64, <lane>]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [pr-conventions, gitleaks, actionlint, lint-yaml-markdown, osv-scanner, gate-integrity, ansible, sops]
+    needs: [pr-conventions, gitleaks, actionlint, lint-yaml-markdown, osv-scanner, ansible, sops]
     if: ${{ !cancelled() }}
     steps:
       - name: Require every job to succeed

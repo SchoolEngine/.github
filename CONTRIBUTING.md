@@ -32,9 +32,9 @@ These rules apply to every SchoolEngine repository. A repository's own `CLAUDE.m
 
 4. **Commits:** [Conventional Commits](https://www.conventionalcommits.org/), in English: `<type>(<scope>): <imperative description> (#<issue>)`. Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`. The scope is the module or domain touched. The body explains why, never how.
 5. **Pull request** against `develop`, using the template: `Closes #<issue>`, context, changes, what to review first, contract impact (none, additive, breaking) and the Definition of Done checklist. Its title follows the commit format and becomes the squash message. Target size: under ~400 diff lines.
-6. **CI:** the `Quality Gate` check (format, lint, types, tests, gitleaks, osv-scanner, contract, gate integrity) must be green. A red CI is never bypassed: fix the cause, never the test or the threshold.
-   - A PR that changes the gate itself (removes a job, changes a common job or the gate, loosens the gitleaks configuration) is a **gate change**: its title type is `ci` and its body has a `## Gate change` section with the justification, or `Gate integrity` fails. A gate change needs the double agent review and Céline's explicit approval. Details: [CI.md](CI.md#gate-integrity).
-   - Every ignore (`osv-scanner.toml`, `.gitleaksignore`, `.gitleaks.toml` allowlist) carries a justification and an expiry date ([CI.md](CI.md#ignore-files)).
+6. **CI:** the `Quality Gate` check (format, lint, types, tests, gitleaks, osv-scanner, contract) must be green. A red CI is never bypassed: fix the cause, never the test or the threshold.
+   - The `Gate integrity` check must be green too. A PR that changes the gate itself (removes a job, changes a common job, the gate, a workflow or the workflow-level settings of `ci.yml`, loosens the gitleaks configuration) is a **gate change**: its body has a `## Gate change` section with the justification, and an approver other than the author applies the `gate-change-approved` label after review (new commits remove it). It also needs the double agent review and Céline's explicit approval. Details: [CI.md](CI.md#gate-integrity).
+   - Every ignore (`osv-scanner.toml`, `.gitleaksignore`, `.gitleaks.toml` allowlist) carries a justification and an expiry date at most 180 days ahead ([CI.md](CI.md#ignore-files)).
 7. **Merge:** squash and merge only, and only with Céline's explicit approval. Nobody merges on their own initiative.
 8. **Cleanup:** the branch is deleted on merge; remove the local branch and the worktree.
 
