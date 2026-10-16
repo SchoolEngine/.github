@@ -30,7 +30,7 @@ Keep the shared settings below when adapting a template; a different `directory`
 
 ## Reviewing a Dependabot PR
 
-A Dependabot PR goes through the same `Quality Gate` as any other and is merged the same way: squash, with Céline's approval. It is exempt from the `Closes #n` check only, since it has no issue. A red gate on a Dependabot PR is fixed in that PR or in a linked ticket, never bypassed.
+A Dependabot PR goes through the same `Quality Gate` as any other and is merged the same way: squash, with Céline's approval. It is exempt from the `Closes #n` check only, since it has no issue. A red gate on a Dependabot PR is fixed in that PR or in a linked ticket, never bypassed. Since `develop` requires branches to be up to date before merge, a Dependabot PR left behind `develop` is rebased by Dependabot itself: comment `@dependabot rebase` (it also rebases on its own when the PR conflicts). Never use Update branch or push to it: once someone else pushes, Dependabot stops updating that PR.
 
 Tool versions downloaded inside CI steps (gitleaks, osv-scanner, actionlint, oasdiff, the Flutter SDK, Node.js) are invisible to Dependabot and are bumped by hand in the CI templates (see [CI.md](CI.md)).
 
