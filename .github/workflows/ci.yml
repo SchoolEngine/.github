@@ -293,8 +293,15 @@ jobs:
       - name: shellcheck
         run: shellcheck -x .github/scripts/*.sh scripts/*.sh tests/*/*.sh
 
-      - name: Gate integrity tests
-        run: tests/gate-integrity/run.sh
+      # Every tests/<script>/run.sh, so a new script test needs no CI change.
+      - name: Script tests
+        run: |
+          set -euo pipefail
+          for t in tests/*/run.sh; do
+            echo "::group::$t"
+            "$t"
+            echo "::endgroup::"
+          done
 
   # Detective control of the gate itself (CI.md, "Gate integrity"): compares
   # this ci.yml and the ignore files with the base branch. It runs the BASE
