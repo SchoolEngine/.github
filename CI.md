@@ -81,7 +81,7 @@ It compares the PR with the base branch (`git show <base>:.github/workflows/ci.y
 
 It also runs `actionlint` on the PR's workflows (blocking) and on the base branch `ci.yml` (informational: a red base must not block the PR that fixes it), and prints the diff of every ignore file the PR touches.
 
-**A gate change** is accepted only when the PR title type is `ci` **and** its body has a `## Gate change` section that justifies it (an HTML comment alone does not count). Such a PR gets the **double agent review** (one of them on security) and **Céline's explicit approval** before merge; the job flags it as a warning and in the run summary. Adding `Gate integrity` to an existing repository is itself a gate change (the rollout PR changes the gate).
+**A gate change** is accepted only when the PR title type is `ci` **and** its body has a `## Gate change` section that justifies it (an HTML comment alone does not count). Such a PR gets the **double agent review** (one of them on security) and **Céline's explicit approval** before merge; the job flags it as a warning and in the run summary. Adding `Gate integrity` to an existing repository is not a gate change: the gate's `needs:` grows and nothing else changes.
 
 The control is detective, not preventive: a PR can still rewrite its own `gate-integrity` job, but that rewrite is a visible diff of `ci.yml`, a gate change for the next PR's checker, and a reason to refuse the merge.
 
