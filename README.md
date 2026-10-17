@@ -20,7 +20,7 @@ Organization-level files of SchoolEngine.
 | `rulesets/` | Organisation rulesets as code (`protect-develop.json`: protection of every default branch, required `Quality Gate` check) and how to change them. |
 | `workflow-templates/gate-integrity.yml`, `.github/workflows/gate-integrity.yml` | `Gate integrity` required check (`pull_request_target`, the PR is read as data): template and this repository's copy. |
 | `.github/scripts/gate-integrity.sh` | Checker run by `Gate integrity`, copied into every repository; tests in `tests/gate-integrity/`, run by the `scripts` job of `ci.yml`. |
-| `scripts/apply-ruleset.sh` | Compares a ruleset file with the live ruleset (dry-run by default) and applies it with `--apply`. |
+| `scripts/apply-ruleset.sh` | Compares a ruleset file with the live ruleset (dry-run by default) and applies it with `--apply`; organisation rulesets, or repository rulesets with `--repo <owner>/<repo>`. Tested by `tests/apply-ruleset/run.sh`. |
 
 ## Inheritance by the other repositories
 
