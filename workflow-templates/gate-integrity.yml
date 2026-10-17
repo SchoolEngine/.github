@@ -1,0 +1,118 @@
+# Gate integrity of SchoolEngine, from workflow-templates/gate-integrity.yml of
+# SchoolEngine/.github. Copied as is into every repository, next to
+# .github/scripts/gate-integrity.sh. Rules and residual risks: CI.md in
+# SchoolEngine/.github, "Gate integrity".
+#
+# Why pull_request_target: GitHub runs this file and the checker from the
+# default branch (develop), never the PR's copy, so a PR cannot rewrite the
+# control that judges it (a `pull_request` job in ci.yml could). The price is
+# a trusted context, hence the rules below, which this file must never break
+# (tests/gate-integrity/run.sh asserts them):
+# - the PR is DATA: its merge commit is fetched as git objects and read with
+#   `git cat-file`; nothing from it is checked out, built, installed or run;
+# - no PR field (title, body, branch name) appears in a `${{ }}` expression
+#   of a `run:` script; only the PR number and SHAs go through `env:`;
+# - `permissions:` empty at the top, read-only for the job; no secret is used;
+# - every action pinned by full commit SHA, every tool by version and sha256.
+# Never rename the `gate-integrity` job nor its name `Gate integrity`: it is a
+# required check of the protect-develop ruleset.
+
+name: Gate integrity
+
+# Every activity that can change the verdict: new commits, and the title or
+# body edited (the `## Gate change` section).
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+concurrency:
+  group: gate-integrity-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  YQ_VERSION: '4.54.1'
+  YQ_SHA256: '8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f'
+
+jobs:
+  # No fork guard on purpose: the PR is only read, never run, so a fork PR is
+  # checked like any other.
+  gate-integrity:
+    name: Gate integrity
+    # GitHub-hosted until the self-hosted lanes exist (SchoolEngine/infrastructure#12).
+    # Future: runs-on: [self-hosted, Linux, X64, <lane>]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # No `ref:`: the default branch, i.e. the trusted checker.
+      - name: Checkout the default branch (trusted)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install yq (pinned, sha256 verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
+          curl -fsSLO --retry 3 --retry-all-errors "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  yq_linux_amd64" | sha256sum --check --strict -
+          install -m 0755 yq_linux_amd64 "$RUNNER_TEMP/bin/yq"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # The merge commit GitHub computed (refs/pull/N/merge): its first parent
+      # is the base branch tip, its tree is what the squash will land. Fetched
+      # as objects only; the token goes through a credential helper that reads
+      # it from the environment, never into .git/config.
+      - name: Fetch the PR as data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016  # expanded by git's helper shell, not here
+          helper='!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f'
+          for attempt in 1 2 3 4 5; do
+            if git -c credential.helper= -c "credential.helper=${helper}" \
+                fetch --no-tags --depth=2 origin "+refs/pull/${PR_NUMBER}/merge:refs/gate/merge" \
+              && [[ "$(git rev-parse refs/gate/merge^2)" == "$HEAD_SHA" ]]; then
+              break
+            fi
+            if [[ "$attempt" -eq 5 ]]; then
+              echo "::error::No up-to-date merge commit for this PR (merge conflict, or GitHub still computing it): resolve the conflicts, or re-run this job."
+              exit 1
+            fi
+            sleep 10
+          done
+          {
+            echo "BASE_REF=$(git rev-parse refs/gate/merge^1)"
+            echo "MERGE_REF=$(git rev-parse refs/gate/merge)"
+          } >> "$GITHUB_ENV"
+
+      # The PR (body, author) and its commits (author, signature: the
+      # Dependabot exemption), fetched live and saved as files read by jq and
+      # Python in the checker: never interpolated into a script.
+      - name: Fetch the PR metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPO}/pulls/${PR_NUMBER}" > "$RUNNER_TEMP/pr.json"
+          gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/commits" | jq -s 'add // []' > "$RUNNER_TEMP/commits.json"
+
+      - name: Check the gate against the base branch
+        run: |
+          set -euo pipefail
+          checker=.github/scripts/gate-integrity.sh
+          if [[ ! -f "$checker" ]]; then
+            echo "::error::$checker is missing on the default branch: copy it from SchoolEngine/.github."
+            exit 1
+          fi
+          PR_JSON_FILE="$RUNNER_TEMP/pr.json" PR_COMMITS_FILE="$RUNNER_TEMP/commits.json" \
+            bash "$checker" ci "$BASE_REF" "$MERGE_REF"

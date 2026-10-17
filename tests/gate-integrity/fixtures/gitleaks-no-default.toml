@@ -1,0 +1,5 @@
+title = "Custom rules only"
+
+[[rules]]
+id = "only-this"
+regex = '''xyz'''

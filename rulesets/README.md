@@ -37,3 +37,41 @@ The cost: after every merge, the other open PRs of the repository are out of dat
 
 - Use the **Update branch** button of the PR, or `gh pr update-branch <n>` (`--rebase` to rebase instead of merging `develop` in; both are fine, the PR is squashed anyway).
 - **Dependabot PRs are rebased by Dependabot itself**: comment `@dependabot rebase` on the PR (it also rebases on its own when the PR conflicts). Do not use Update branch on them: once someone else pushes to a Dependabot branch, Dependabot stops updating that PR.
+
+## Enabling the Gate integrity check
+
+`Gate integrity` (SchoolEngine/.github#22, [CI.md](../CI.md#gate-integrity)) is not in `protect-develop.json` yet: it is added by a separate **activation PR**, applied right after its merge. A required check that a repository never reports blocks every merge there, and a `pull_request_target` workflow only runs once it is on the default branch, so the order is fixed:
+
+1. **Rollout.** In every repository, a PR copies `.github/workflows/gate-integrity.yml` and `.github/scripts/gate-integrity.sh` from this repository unchanged. That PR gets no `Gate integrity` run (the workflow is not on `develop` yet).
+2. **Canary.** In every repository, a trivial PR (a typo fix, for example) must show `Gate integrity` green, and a deliberately weakened draft PR (a job removed from the gate's `needs:`) must show it red; close the draft. Check that every repository has both files on `develop` (each line must say `ok`):
+
+   ```bash
+   for r in $(gh repo list SchoolEngine --no-archived --json name --jq '.[].name'); do
+     for f in .github/workflows/gate-integrity.yml .github/scripts/gate-integrity.sh; do
+       gh api "repos/SchoolEngine/$r/contents/$f?ref=develop" --silent 2>/dev/null \
+         && echo "ok      $r $f" || echo "MISSING $r $f"
+     done
+   done
+   ```
+
+3. **Activation PR** in this repository: adds `{"context": "Gate integrity", "integration_id": 15368}` to the required checks of `protect-develop.json`. After its merge, an organisation owner applies it; the dry-run must show only the added check:
+
+   ```bash
+   scripts/apply-ruleset.sh rulesets/protect-develop.json
+   scripts/apply-ruleset.sh --apply rulesets/protect-develop.json
+   ```
+
+4. **Check** on one repository: `gh api repos/SchoolEngine/backend/rules/branches/develop --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks'` lists both checks.
+5. **Open PRs** opened before the activation have no `Gate integrity` run on their head commit: use **Update branch** (or push a commit, or edit the PR body) to trigger it.
+
+**New repositories** get `gate-integrity.yml` and the checker in their scaffold, before their first PR: under the ruleset, a repository without them cannot merge anything.
+
+**Break-glass** (the check is broken everywhere, for example a GitHub change to `pull_request_target`): an organisation owner removes the check from the live ruleset through the API, then records it in a PR so the file matches again:
+
+```bash
+jq '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks)
+    |= map(select(.context != "Gate integrity"))' rulesets/protect-develop.json > /tmp/protect-develop.json
+scripts/apply-ruleset.sh --apply /tmp/protect-develop.json
+```
+
+The PR that fixes the check then restores the entry, and it is applied again after its merge.

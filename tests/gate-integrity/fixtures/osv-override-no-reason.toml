@@ -1,0 +1,5 @@
+[[PackageOverrides]]
+name = "left-pad"
+ecosystem = "npm"
+ignore = true
+effectiveUntil = 2026-12-31

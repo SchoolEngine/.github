@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "GHSA-aaaa-bbbb-cccc"
+ignoreUntil = 2026-09-30
+reason = "No fixed version yet; the vulnerable function is not called."

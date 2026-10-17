@@ -23,11 +23,16 @@ concurrency:
   cancel-in-progress: true
 
 # Tool versions: one place per template. Run-step downloads are not seen by
-# Dependabot: bump them here by hand (ADR-014).
+# Dependabot: bump them here by hand (ADR-014). Each *_SHA256 is the sha256
+# of the linux amd64 release asset, pinned here and bumped with the version
+# (never read from a checksum file of the same release).
 env:
   GITLEAKS_VERSION: '8.30.1'
+  GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
   ACTIONLINT_VERSION: '1.7.12'
+  ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
   OSV_SCANNER_VERSION: '2.7.0'
+  OSV_SCANNER_SHA256: '160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b'
   YAMLLINT_VERSION: '1.38.0'
   MARKDOWNLINT_CLI2_VERSION: '0.23.3'
   PYTHON_VERSION: '3.13'
@@ -35,6 +40,7 @@ env:
   # TODO(scaffold): path of the OpenAPI document in the contracts repository.
   OPENAPI_SPEC: 'openapi/openapi.yaml'
   OASDIFF_VERSION: '1.33.0'
+  OASDIFF_SHA256: '43a4e328e2d13ba1552d760aa68d2485c75c5621f309f6ff64ae895188345247'
   # Spectral standalone binary; sha256 = the GitHub release asset digest.
   SPECTRAL_VERSION: '6.16.3'
   SPECTRAL_SHA256: 'b90ac8da7b804d04052b9db8d4ea5028d29fba9bc69b02dc85d46e5fcc476452'
@@ -103,16 +109,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install gitleaks (pinned, checksum verified)
+      - name: Install gitleaks (pinned, sha256 verified)
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
           archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          sums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
           curl -fsSLO "$base/$archive"
-          curl -fsSLO "$base/$sums"
-          awk -v f="$archive" '$2 == f' "$sums" | sha256sum --check --strict -
+          echo "${GITLEAKS_SHA256}  $archive" | sha256sum --check --strict -
           tar -xzf "$archive" -C "$RUNNER_TEMP/bin" gitleaks
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
@@ -137,16 +141,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install actionlint (pinned, checksum verified)
+      - name: Install actionlint (pinned, sha256 verified)
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
           base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
           archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          sums="actionlint_${ACTIONLINT_VERSION}_checksums.txt"
           curl -fsSLO "$base/$archive"
-          curl -fsSLO "$base/$sums"
-          awk -v f="$archive" '$2 == f' "$sums" | sha256sum --check --strict -
+          echo "${ACTIONLINT_SHA256}  $archive" | sha256sum --check --strict -
           tar -xzf "$archive" -C "$RUNNER_TEMP/bin" actionlint
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
@@ -212,15 +214,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install osv-scanner (pinned, checksum verified)
+      - name: Install osv-scanner (pinned, sha256 verified)
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
           base="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}"
           binary="osv-scanner_linux_amd64"
           curl -fsSLO "$base/$binary"
-          curl -fsSLO "$base/osv-scanner_SHA256SUMS"
-          awk -v f="$binary" '$2 == f' osv-scanner_SHA256SUMS | sha256sum --check --strict -
+          echo "${OSV_SCANNER_SHA256}  $binary" | sha256sum --check --strict -
           install -m 0755 "$binary" "$RUNNER_TEMP/bin/osv-scanner"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
@@ -269,7 +270,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Spectral (pinned, checksum verified)
+      - name: Install Spectral (pinned, sha256 verified)
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin"
@@ -308,15 +309,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install oasdiff (pinned, checksum verified)
+      - name: Install oasdiff (pinned, sha256 verified)
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
           base="https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}"
           archive="oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz"
           curl -fsSLO "$base/$archive"
-          curl -fsSL -o oasdiff_checksums.txt "$base/checksums.txt"
-          awk -v f="$archive" '$2 == f' oasdiff_checksums.txt | sha256sum --check --strict -
+          echo "${OASDIFF_SHA256}  $archive" | sha256sum --check --strict -
           tar -xzf "$archive" -C "$RUNNER_TEMP/bin" oasdiff
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
