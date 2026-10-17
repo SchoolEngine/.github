@@ -17,7 +17,7 @@ Organization-level files of SchoolEngine.
 | `.github/workflows/ci.yml` | CI of this repository, from the `ci-common` template plus a `scripts` job (shellcheck, `tests/*/run.sh`): produces the `Quality Gate` check. |
 | `.github/dependabot.yml` | Dependabot configuration of this repository, from the `common` template (`github-actions`). |
 | `.yamllint.yml`, `.markdownlint-cli2.yaml` | Lint configuration of this repository, copies of `templates/lint/`. |
-| `rulesets/` | Organisation rulesets as code (`protect-develop.json`: protection of every default branch, required `Quality Gate` and `Gate integrity` checks) and how to change them. |
+| `rulesets/` | Organisation rulesets as code (`protect-develop.json`: protection of every default branch, required `Quality Gate` check) and how to change them. |
 | `workflow-templates/gate-integrity.yml`, `.github/workflows/gate-integrity.yml` | `Gate integrity` required check (`pull_request_target`, the PR is read as data): template and this repository's copy. |
 | `.github/scripts/gate-integrity.sh` | Checker run by `Gate integrity`, copied into every repository; tests in `tests/gate-integrity/`, run by the `scripts` job of `ci.yml`. |
 | `scripts/apply-ruleset.sh` | Compares a ruleset file with the live ruleset (dry-run by default) and applies it with `--apply`. |

@@ -51,10 +51,6 @@
           {
             "context": "Quality Gate",
             "integration_id": 15368
-          },
-          {
-            "context": "Gate integrity",
-            "integration_id": 15368
           }
         ]
       }

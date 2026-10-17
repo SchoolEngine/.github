@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Table test of .github/scripts/gate-integrity.sh (SchoolEngine/.github#22).
-# Workflow cases mutate the real templates with yq; ignore cases use the files
-# of fixtures/; approval cases use generated PR metadata. Run by the `scripts`
-# job of ci.yml.
+# Table test of .github/scripts/gate-integrity.sh and of the invariants of
+# workflow-templates/gate-integrity.yml (SchoolEngine/.github#22). Workflow
+# cases mutate the real templates with yq; ignore cases use the files of
+# fixtures/; PR metadata is generated. Run by the `scripts` job of ci.yml.
 #
 # Usage: tests/gate-integrity/run.sh   (needs bash 4+, yq, jq, python3, git)
 set -euo pipefail
@@ -11,12 +11,18 @@ root=$(git rev-parse --show-toplevel)
 script="$root/.github/scripts/gate-integrity.sh"
 fixtures="$root/tests/gate-integrity/fixtures"
 templates="$root/workflow-templates"
+workflow="$templates/gate-integrity.yml"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export GATE_INTEGRITY_TODAY="2026-10-16"
-unset PR_JSON_FILE PR_EVENTS_FILE PR_ACTION GATE_CHANGE_APPROVERS GITHUB_STEP_SUMMARY
+unset PR_JSON_FILE GITHUB_STEP_SUMMARY
 
 failures=0
+fail() {
+  echo "FAIL $1"
+  failures=$((failures + 1))
+}
+
 # expect: 0 = passes, 1 = fails. Output is kept for the failing cases only.
 expect() {
   local want=$1 label=$2 rc=0
@@ -25,11 +31,43 @@ expect() {
   if [[ "$rc" -eq "$want" ]]; then
     echo "ok   $label"
   else
-    echo "FAIL $label: exit $rc, expected $want"
+    fail "$label: exit $rc, expected $want"
     sed 's/^/     /' "$work/out.txt"
-    failures=$((failures + 1))
   fi
 }
+
+# assert <label> <jq expression on the workflow as JSON that must be true>
+workflow_json=$(yq -o json '.' "$workflow")
+assert() {
+  if [[ "$(jq "$2" <<<"$workflow_json")" == "true" ]]; then
+    echo "ok   $1"
+  else
+    fail "$1"
+  fi
+}
+
+echo "== Invariants of the gate-integrity workflow"
+assert "only the pull_request_target trigger" '(.on | keys) == ["pull_request_target"]'
+assert "triggers on opened, synchronize, reopened and edited" \
+  '(.on.pull_request_target.types | sort) == ["edited", "opened", "reopened", "synchronize"]'
+assert "permissions: {} at the top" '.permissions == {}'
+assert "only read permissions in jobs" \
+  '[.jobs[].permissions // {} | .[] | select(. != "read")] | length == 0'
+assert "no ref: on any checkout (the default branch only)" \
+  '[.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | .with.ref // empty] | length == 0'
+assert "checkout without persisted credentials" \
+  '[.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | select(.with["persist-credentials"] != false)] | length == 0'
+assert "no expression in any run: script" \
+  '[.jobs[].steps[] | .run // "" | select(test("[$][{][{]"))] | length == 0'
+assert "no PR title, body or branch anywhere in the workflow" \
+  '[.. | strings | select(test("pull_request[.](title|body|head[.]ref)|github[.]head_ref|pull_request[.]labels"))] | length == 0'
+assert "actions pinned by full commit SHA" \
+  '[.jobs[].steps[] | .uses // empty | select(test("@[0-9a-f]{40}$") | not)] | length == 0'
+if cmp -s "$workflow" "$root/.github/workflows/gate-integrity.yml"; then
+  echo "ok   the live copy is the template"
+else
+  fail "the live copy .github/workflows/gate-integrity.yml differs from the template"
+fi
 
 # --- Trees ------------------------------------------------------------------
 
@@ -39,7 +77,7 @@ tree() {
   local dir=$1 ci=$2
   rm -rf "$dir" && mkdir -p "$dir/.github/workflows" "$dir/.github/scripts"
   [[ -z "$ci" ]] || cp "$ci" "$dir/.github/workflows/ci.yml"
-  cp "$templates/gate-integrity.yml" "$dir/.github/workflows/gate-integrity.yml"
+  cp "$workflow" "$dir/.github/workflows/gate-integrity.yml"
   cp "$script" "$dir/.github/scripts/gate-integrity.sh"
 }
 
@@ -61,44 +99,45 @@ head_with() {
   echo "$work/head"
 }
 
+# A head tree: the base tree with a raw line appended to ci.yml.
+head_append() {
+  tree "$work/head" "$templates/ci-node.yml"
+  printf '%s\n' "$1" >>"$work/head/.github/workflows/ci.yml"
+  echo "$work/head"
+}
+
 check() { "$script" check "$base" "$1"; }
 
 # --- PR metadata ------------------------------------------------------------
 
-approver="celine-approver"
-author="Lynerah"
-section_body=$'Closes #1\n\n## Gate change\n\nThe node job moves to another workflow.\n\n## Review first\n'
-
-# pr_meta <name> <body> <label on the PR: yes|no> [labeled-by...]
+# pr_meta <name> <author> <body>
 pr_meta() {
-  local name=$1 body=$2 present=$3 labels='[]' events='[]' actor
-  shift 3
-  [[ "$present" == "no" ]] || labels='[{"name": "gate-change-approved"}]'
-  for actor in "$@"; do
-    events=$(jq --arg a "$actor" '. + [{event: "labeled", label: {name: "gate-change-approved"}, actor: {login: $a}}]' <<<"$events")
-  done
-  jq -n --arg body "$body" --arg author "$author" --argjson labels "$labels" \
-    '{body: $body, user: {login: $author}, labels: $labels}' >"$work/$name.pr.json"
-  echo "$events" >"$work/$name.events.json"
+  jq -n --arg author "$2" --arg body "$3" '{body: $body, user: {login: $author}}' >"$work/$1.pr.json"
 }
-pr_meta feat "Closes #1" no
-pr_meta approved "$section_body" yes "$approver"
-pr_meta no-section "Closes #1" yes "$approver"
-pr_meta empty-section $'Closes #1\n\n## Gate change\n\n<!-- why -->\n\n## Review first\n' yes "$approver"
-pr_meta self "$section_body" yes "$author"
-pr_meta stranger "$section_body" yes "someone-else"
-pr_meta removed "$section_body" no "$approver"
-pr_meta relabeled "$section_body" yes "$approver" "$author"
+justification="The node job moves to a separate workflow, reviewed in this PR."
+pr_meta feat Lynerah "Closes #1"
+pr_meta justified Lynerah $'Closes #1\n\n## Gate change\n\n'"$justification"$'\n\n## Review first\n'
+pr_meta dependabot "dependabot[bot]" "Bumps actions/checkout."
+pr_meta no-section Lynerah $'Closes #1\n\n## Review first\n\n'"$justification"
+pr_meta empty-section Lynerah $'Closes #1\n\n## Gate change\n\n## Review first\n'
+pr_meta comment-only Lynerah $'Closes #1\n\n## Gate change\n\n<!-- '"$justification"$' -->\n\n## Review first\n'
+pr_meta multiline-comment Lynerah $'Closes #1\n\n## Gate change\n\n<!--\n'"$justification"$'\n-->\nok\n'
+pr_meta unterminated-comment Lynerah $'Closes #1\n\n## Gate change\n\nok <!-- '"$justification"
+pr_meta heading-in-comment Lynerah $'Closes #1\n\n<!--\n## Gate change\n\n'"$justification"$'\n-->\n'
+pr_meta short Lynerah $'Closes #1\n\n## Gate change\n\nNeeded, see issue.\n'
+pr_meta crlf Lynerah $'Closes #1\r\n\r\n## Gate change\r\n\r\n'"$justification"$'\r\n'
 
-# as_pr <metadata name> <activity type> <command...>
 as_pr() {
-  local name=$1 action=$2
-  shift 2
-  PR_JSON_FILE="$work/$name.pr.json" PR_EVENTS_FILE="$work/$name.events.json" \
-    PR_ACTION="$action" GATE_CHANGE_APPROVERS="jonathanpiette, $approver" "$@"
+  local name=$1
+  shift
+  PR_JSON_FILE="$work/$name.pr.json" "$@"
 }
-feat_pr() { as_pr feat opened "$@"; }
-approved_pr() { as_pr approved labeled "$@"; }
+feat_pr() { as_pr feat "$@"; }
+justified_pr() { as_pr justified "$@"; }
+dependabot_pr() { as_pr dependabot "$@"; }
+
+sha_a="0000000000000000000000000000000000000000"
+sha64="1111111111111111111111111111111111111111111111111111111111111111"
 
 echo "== Legitimate changes"
 for t in common node flutter openapi ansible; do
@@ -108,111 +147,128 @@ for t in common node flutter openapi ansible; do
 done
 expect 0 "a stack job added" feat_pr check \
   "$(head_of '.jobs.extra = {"name": "Extra", "runs-on": "ubuntu-latest", "steps": [{"run": "true"}]} | .jobs.quality-gate.needs += ["extra"]')"
-expect 0 "an action SHA bumped in ci.yml (Dependabot)" feat_pr check \
-  "$(head_of '(.jobs.gitleaks.steps[0].uses) = "actions/checkout@0000000000000000000000000000000000000000"')"
-expect 0 "a tool version and its sha256 bumped" feat_pr check \
-  "$(head_of '.env.GITLEAKS_VERSION = "8.31.0" | .env.GITLEAKS_SHA256 = "0000"')"
 expect 0 "a step added to a stack job" feat_pr check \
   "$(head_of '.jobs.node.steps += [{"name": "Extra", "run": "true"}]')"
-head=$(head_of '.')
-yq -i '(.jobs.gate-integrity.steps[0].uses) = "actions/checkout@0000000000000000000000000000000000000000"' \
-  "$head/.github/workflows/gate-integrity.yml"
-expect 0 "an action SHA bumped in gate-integrity.yml (Dependabot)" feat_pr check "$head"
+expect 0 "a matrix stack job (names get a suffix, never a check name)" feat_pr check \
+  "$(head_of '.jobs.node.strategy.matrix.os = ["a", "b"]')"
+expect 0 "a tool version bumped with its sha256" feat_pr check \
+  "$(head_of ".env.GITLEAKS_VERSION = \"8.31.0\" | .env.GITLEAKS_SHA256 = \"$sha64\"")"
+expect 0 "a version without sha256 bumped" feat_pr check "$(head_of '.env.YAMLLINT_VERSION = "1.39.0"')"
+expect 0 "Dependabot: an action SHA bumped in ci.yml" dependabot_pr check \
+  "$(head_of "(.jobs.gitleaks.steps[0].uses) = \"actions/checkout@$sha_a\"")"
 tree "$work/t-base" ""
 expect 0 "no ci.yml on the base branch" feat_pr "$script" check "$work/t-base" "$(head_of '.')"
 
-echo "== Hard failures (never accepted, even approved)"
-expect 1 "a common job removed" approved_pr check \
+echo "== Hard failures (never accepted, even justified)"
+expect 1 "a common job removed" justified_pr check \
   "$(head_of 'del(.jobs.osv-scanner) | .jobs.quality-gate.needs -= ["osv-scanner"]')"
-expect 1 "needs shrunk (job kept, out of the gate)" approved_pr check \
+expect 1 "needs shrunk (job kept, out of the gate)" justified_pr check \
   "$(head_of '.jobs.quality-gate.needs -= ["node"]')"
-# shellcheck disable=SC2016  # a literal GitHub expression
-expect 1 "gate if: changed to always()" approved_pr check \
+# shellcheck disable=SC2016  # literal GitHub expressions
+expect 1 "gate if: changed to always()" justified_pr check \
   "$(head_of '.jobs.quality-gate.if = "${{ always() }}"')"
-expect 1 "gate if: removed" approved_pr check "$(head_of 'del(.jobs.quality-gate.if)')"
-expect 1 "gate renamed" approved_pr check "$(head_of '.jobs.quality-gate.name = "Gate"')"
-expect 1 "continue-on-error on a job" approved_pr check "$(head_of '.jobs.node.continue-on-error = true')"
-expect 1 "continue-on-error on a step" approved_pr check \
+expect 1 "gate if: removed" justified_pr check "$(head_of 'del(.jobs.quality-gate.if)')"
+expect 1 "gate renamed" justified_pr check "$(head_of '.jobs.quality-gate.name = "Gate"')"
+expect 1 "continue-on-error on a job" justified_pr check "$(head_of '.jobs.node.continue-on-error = true')"
+expect 1 "continue-on-error on a step" justified_pr check \
   "$(head_of '.jobs.node.steps[1].continue-on-error = true')"
-expect 1 "custom shell in defaults (true {0})" approved_pr check \
+expect 1 "custom shell in defaults (true {0})" justified_pr check \
   "$(head_of '.defaults.run.shell = "true {0}"')"
-expect 1 "custom shell on a step" approved_pr check \
-  "$(head_of '.jobs.node.steps[1].shell = "bash -c true {0}"')"
-expect 1 "write permission on a job of ci.yml" approved_pr check \
+for shell in "bash -c true {0}" "python cmd" "bash sh" "sh pwsh"; do
+  expect 1 "custom shell on a step ($shell)" justified_pr check \
+    "$(head_of ".jobs.node.steps[1].shell = \"$shell\"")"
+done
+expect 1 "write permission on a job of ci.yml" justified_pr check \
   "$(head_of '.jobs.node.permissions.statuses = "write"')"
-expect 1 "write-all in ci.yml" approved_pr check "$(head_of '.permissions = "write-all"')"
-expect 1 "a job named Gate integrity in ci.yml" approved_pr check \
+expect 1 "write-all in ci.yml" justified_pr check "$(head_of '.permissions = "write-all"')"
+expect 1 "no top-level permissions in ci.yml" justified_pr check "$(head_of 'del(.permissions)')"
+expect 1 "a job named Gate integrity in ci.yml" justified_pr check \
   "$(head_of '.jobs.node.name = "Gate integrity"')"
-head=$(head_of '.')
-printf 'x: &anchor [1]\n' >>"$head/.github/workflows/ci.yml"
-expect 1 "a YAML anchor in ci.yml" approved_pr check "$head"
-head=$(head_of '.')
-yq -i '.jobs.quality-gate.needs += ["extra"]' "$head/.github/workflows/ci.yml"
+# shellcheck disable=SC2016  # literal GitHub expressions
+expect 1 "a job name built from an expression" justified_pr check \
+  "$(head_of '.jobs.node.name = "${{ format(''{0} {1}'', ''Quality'', ''Gate'') }}"')"
+expect 1 "a YAML anchor in ci.yml" justified_pr check "$(head_append 'x: &anchor [1]')"
+head=$(head_of '.jobs.quality-gate.needs += ["extra"]')
 printf '  extra:\n    <<: {timeout-minutes: 1}\n    runs-on: ubuntu-latest\n    steps: [{run: "true"}]\n' >>"$head/.github/workflows/ci.yml"
-expect 1 "a YAML merge key in ci.yml" approved_pr check "$head"
-expect 1 "a new workflow with pull_request_target" approved_pr check "$(head_with .github/workflows/x.yml <<'EOF'
+expect 1 "a YAML merge key in ci.yml" justified_pr check "$head"
+head=$(head_of '.')
+sed -i.bak 's/^permissions:/permissions: {}\npermissions:/' "$head/.github/workflows/ci.yml"
+expect 1 "duplicate keys in ci.yml" justified_pr check "$head"
+expect 1 "a second YAML document in ci.yml" justified_pr check "$(head_append $'---\non: push')"
+expect 1 "a tool version that is not a version" justified_pr check "$(head_of '.env.YAMLLINT_VERSION = "latest"')"
+expect 1 "a tool version downgraded" justified_pr check "$(head_of '.env.YAMLLINT_VERSION = "1.9.0"')"
+expect 1 "a version bumped without its sha256" justified_pr check "$(head_of '.env.GITLEAKS_VERSION = "8.31.0"')"
+expect 1 "a sha256 changed without its version" justified_pr check "$(head_of ".env.GITLEAKS_SHA256 = \"$sha64\"")"
+expect 1 "a sha256 that is not one" justified_pr check \
+  "$(head_of '.env.GITLEAKS_VERSION = "8.31.0" | .env.GITLEAKS_SHA256 = "abc"')"
+new_workflow_case() {
+  expect 1 "a new workflow $1" justified_pr check "$(head_with .github/workflows/x.yml)"
+}
+new_workflow_case "with pull_request_target" <<'EOF'
 on: pull_request_target
 permissions: {}
 jobs:
   x: {runs-on: ubuntu-latest, steps: [{run: "true"}]}
 EOF
-)"
-expect 1 "a new workflow with workflow_run" approved_pr check "$(head_with .github/workflows/x.yml <<'EOF'
+new_workflow_case "with workflow_run" <<'EOF'
 on:
   workflow_run: {workflows: [CI], types: [completed]}
 permissions: {}
 jobs:
   x: {runs-on: ubuntu-latest, steps: [{run: "true"}]}
 EOF
-)"
-expect 1 "a new workflow spoofing the Quality Gate check" approved_pr check "$(head_with .github/workflows/x.yaml <<'EOF'
+new_workflow_case "spoofing the Quality Gate check" <<'EOF'
 on: pull_request
 permissions: {}
 jobs:
   x: {name: Quality Gate, runs-on: ubuntu-latest, steps: [{run: "true"}]}
 EOF
-)"
-expect 1 "a new workflow spoofing the Gate integrity check" approved_pr check "$(head_with .github/workflows/x.yml <<'EOF'
+new_workflow_case "spoofing the Gate integrity check" <<'EOF'
 on: pull_request
 permissions: {}
 jobs:
   gate-integrity: {name: gate INTEGRITY, runs-on: ubuntu-latest, steps: [{run: "true"}]}
 EOF
-)"
-expect 1 "a new workflow with statuses: write" approved_pr check "$(head_with .github/workflows/x.yml <<'EOF'
+new_workflow_case "with statuses: write" <<'EOF'
 on: pull_request
 permissions: {statuses: write}
 jobs:
   x: {runs-on: ubuntu-latest, steps: [{run: "true"}]}
 EOF
-)"
+new_workflow_case "without top-level permissions" <<'EOF'
+on: pull_request
+jobs:
+  x: {runs-on: ubuntu-latest, permissions: {contents: read}, steps: [{run: "true"}]}
+EOF
 head=$(head_of '.')
 rm "$head/.github/workflows/gate-integrity.yml"
-expect 1 "gate-integrity.yml removed" approved_pr check "$head"
+expect 1 "gate-integrity.yml removed" justified_pr check "$head"
 head=$(head_of '.')
 rm "$head/.github/scripts/gate-integrity.sh"
-expect 1 "the checker removed" approved_pr check "$head"
+expect 1 "the checker removed" justified_pr check "$head"
 
-echo "== Gate changes: refused unless approved"
+echo "== Gate changes: refused unless justified"
 gate_change_case() {
   local label=$1 head=$2
-  expect 1 "$label, not approved" feat_pr check "$head"
-  expect 0 "$label, approved" approved_pr check "$head"
+  expect 1 "$label, no justification" feat_pr check "$head"
+  expect 0 "$label, justified" justified_pr check "$head"
 }
 gate_change_case "stack job removed" "$(head_of 'del(.jobs.node) | .jobs.quality-gate.needs -= ["node"]')"
 gate_change_case "gitleaks step rewritten" "$(head_of '.jobs.gitleaks.steps[2].run = "true"')"
 gate_change_case "gate script rewritten" "$(head_of '.jobs.quality-gate.steps[0].run = "exit 0"')"
+gate_change_case "an action SHA changed by a person" \
+  "$(head_of "(.jobs.gitleaks.steps[0].uses) = \"actions/checkout@$sha_a\"")"
 gate_change_case "trigger changed (on)" "$(head_of '.on.pull_request.types = ["opened"]')"
 gate_change_case "workflow permissions changed" "$(head_of '.permissions = {}')"
 gate_change_case "defaults added" "$(head_of '.defaults.run.working-directory = "docs"')"
 gate_change_case "concurrency changed" "$(head_of '.concurrency.group = "x"')"
-tree "$work/t-base" "$templates/ci-common.yml"
-expect 1 "template switch ci-common to ci-node (env added), not approved" \
-  feat_pr "$script" check "$work/t-base" "$(head_of '.')"
-expect 0 "template switch ci-common to ci-node (env added), approved" \
-  approved_pr "$script" check "$work/t-base" "$(head_of '.')"
 gate_change_case "coverage floor lowered (env)" "$(head_of '.env.COVERAGE_MIN = "10"')"
-gate_change_case "workflow env changed (not a version)" "$(head_of '.env.NODE_OPTIONS = "--require ./x.js"')"
+gate_change_case "workflow env added (BASH_ENV)" "$(head_of '.env.BASH_ENV = "./x.sh"')"
+tree "$work/t-base" "$templates/ci-common.yml"
+expect 1 "template switch ci-common to ci-node (env added), no justification" \
+  feat_pr "$script" check "$work/t-base" "$(head_of '.')"
+expect 0 "template switch ci-common to ci-node (env added), justified" \
+  justified_pr "$script" check "$work/t-base" "$(head_of '.')"
 gate_change_case "a new workflow" "$(head_with .github/workflows/release.yml <<'EOF'
 on: {push: {tags: ['v*']}}
 permissions: {contents: read}
@@ -221,25 +277,40 @@ jobs:
 EOF
 )"
 head=$(head_of '.')
-yq -i 'del(.jobs.drop-stale-approval)' "$head/.github/workflows/gate-integrity.yml"
+yq -i '.jobs.gate-integrity.timeout-minutes = 30' "$head/.github/workflows/gate-integrity.yml"
 gate_change_case "gate-integrity.yml changed" "$head"
+head=$(head_of '.')
+yq -i "(.jobs.gate-integrity.steps[0].uses) = \"actions/checkout@$sha_a\"" "$head/.github/workflows/gate-integrity.yml"
+expect 1 "Dependabot: an action SHA bumped in gate-integrity.yml (never normalized)" dependabot_pr check "$head"
+expect 1 "Dependabot: the action repository changed" dependabot_pr check \
+  "$(head_of "(.jobs.gitleaks.steps[0].uses) = \"evil/checkout@$sha_a\"")"
 head=$(head_of '.')
 echo "# changed" >>"$head/.github/scripts/gate-integrity.sh"
 gate_change_case "the checker changed" "$head"
+gate_change_case "a local action added" "$(head_with .github/actions/setup/action.yml <<'EOF'
+runs: {using: composite, steps: [{run: "true", shell: bash}]}
+EOF
+)"
+mkdir -p "$base/.github/actions/setup"
+echo 'runs: {using: composite, steps: [{run: "true", shell: bash}]}' >"$base/.github/actions/setup/action.yml"
+gate_change_case "a local action removed" "$(head_of '.')"
+gate_change_case "a local action changed" "$(head_with .github/actions/setup/action.yml <<'EOF'
+runs: {using: composite, steps: [{run: "exit 0", shell: bash}]}
+EOF
+)"
+rm -rf "$base/.github/actions"
 
-echo "== Approval of a gate change"
+echo "== The Gate change justification"
 removed=$(head_of 'del(.jobs.node) | .jobs.quality-gate.needs -= ["node"]')
-expect 0 "approved by a listed approver" approved_pr check "$removed"
-expect 0 "approved, then the body edited" as_pr approved edited check "$removed"
-expect 1 "approved, no Gate change section" as_pr no-section labeled check "$removed"
-expect 1 "approved, empty Gate change section" as_pr empty-section labeled check "$removed"
-expect 1 "label applied by the PR author" as_pr self labeled check "$removed"
-expect 1 "label applied by someone not listed" as_pr stranger labeled check "$removed"
-expect 1 "label removed since" as_pr removed unlabeled check "$removed"
-expect 1 "label re-applied by the PR author" as_pr relabeled labeled check "$removed"
-expect 1 "new commits pushed after the approval" as_pr approved synchronize check "$removed"
-expect 1 "no approver configured" env GATE_CHANGE_APPROVERS= PR_JSON_FILE="$work/approved.pr.json" \
-  PR_EVENTS_FILE="$work/approved.events.json" PR_ACTION=labeled "$script" check "$base" "$removed"
+expect 0 "a justification of 20 letters or more" justified_pr check "$removed"
+expect 0 "CRLF line endings" as_pr crlf check "$removed"
+expect 1 "no Gate change section" as_pr no-section check "$removed"
+expect 1 "an empty section" as_pr empty-section check "$removed"
+expect 1 "the justification inside an HTML comment" as_pr comment-only check "$removed"
+expect 1 "a multi-line HTML comment, 2 letters outside" as_pr multiline-comment check "$removed"
+expect 1 "an unterminated HTML comment" as_pr unterminated-comment check "$removed"
+expect 1 "the section heading inside an HTML comment" as_pr heading-in-comment check "$removed"
+expect 1 "a justification under 20 letters" as_pr short check "$removed"
 expect 1 "no PR metadata" check "$removed"
 
 echo "== Ignore files"
@@ -253,6 +324,7 @@ ignores_case() {
 ignores_case 0 "osv-scanner.toml with reason and expiry" osv-scanner.toml osv-ok.toml
 ignores_case 0 "osv-scanner.toml with a datetime expiry" osv-scanner.toml osv-datetime.toml
 ignores_case 0 "nested osv-scanner.toml with reason and expiry" generators/ts/osv-scanner.toml osv-ok.toml
+ignores_case 0 "osv-scanner.toml under node_modules is not ours" node_modules/x/osv-scanner.toml osv-no-expiry.toml
 ignores_case 1 "osv-scanner.toml ignore without expiry" osv-scanner.toml osv-no-expiry.toml
 ignores_case 1 "nested osv-scanner.toml ignore without expiry" clients/dart/osv-scanner.toml osv-no-expiry.toml
 ignores_case 1 "osv-scanner.toml override without reason" osv-scanner.toml osv-override-no-reason.toml
@@ -266,14 +338,13 @@ ignores_case 1 ".gitleaksignore expiry beyond 180 days" .gitleaksignore gitleaks
 ignores_case 1 ".gitleaksignore justification too short" .gitleaksignore gitleaksignore-short
 ignores_case 0 ".gitleaks.toml allowlist with justification and expiry" .gitleaks.toml gitleaks-ok.toml
 ignores_case 1 ".gitleaks.toml allowlist without expiry" .gitleaks.toml gitleaks-no-expiry.toml
-ignores_case 1 ".gitleaks.toml without the default rules, not approved" .gitleaks.toml gitleaks-no-default.toml
-ignores_case 0 ".gitleaks.toml without the default rules, approved" .gitleaks.toml gitleaks-no-default.toml approved_pr
+ignores_case 1 ".gitleaks.toml without the default rules, no justification" .gitleaks.toml gitleaks-no-default.toml
+ignores_case 0 ".gitleaks.toml without the default rules, justified" .gitleaks.toml gitleaks-no-default.toml justified_pr
 
 echo "== Workflow command injection"
 ignores_case 1 "an osv id holding a newline and '::error::'" osv-scanner.toml osv-injection.toml
 if grep -q '^::error::injected' "$work/out.txt"; then
-  echo "FAIL PR text opened a workflow command"
-  failures=$((failures + 1))
+  fail "PR text opened a workflow command"
 else
   echo "ok   PR text escaped in annotations"
 fi
@@ -288,8 +359,7 @@ EOF
 expect 1 "a new workflow printed in the log" feat_pr check "$head"
 if awk '/^::stop-commands::/ { stopped = 1 } /^::[0-9a-f]+::$/ { stopped = 0 }
         /::error::injected/ && !stopped { bad = 1 } END { exit bad ? 0 : 1 }' "$work/out.txt"; then
-  echo "FAIL PR text printed outside the stop-commands markers"
-  failures=$((failures + 1))
+  fail "PR text printed outside the stop-commands markers"
 else
   echo "ok   PR text printed between stop-commands markers"
 fi
@@ -308,14 +378,18 @@ ci_run() { (cd "$repo" && "$@" "$script" ci "$base_sha" "$(git rev-parse HEAD)")
 yq -i 'del(.jobs.node) | .jobs.quality-gate.needs -= ["node"]' "$repo/.github/workflows/ci.yml"
 cp "$fixtures/osv-no-expiry.toml" "$repo/osv-scanner.toml"
 commit "job removed, unjustified ignore"
-expect 1 "job removed and an unjustified ignore, approved" ci_run approved_pr
+expect 1 "job removed and an unjustified ignore, justified PR" ci_run justified_pr
 cp "$fixtures/osv-ok.toml" "$repo/osv-scanner.toml"
 commit "justified ignore"
-expect 1 "job removed, justified ignore, not approved" ci_run feat_pr
-expect 0 "job removed, justified ignore, approved" ci_run approved_pr
+expect 1 "job removed, justified ignore, no justification" ci_run feat_pr
+expect 0 "job removed, justified ignore, justified PR" ci_run justified_pr
 echo "not read by the checker" >"$repo/$(printf 'odd\nname.txt')"
-commit "a file name with a newline"
-expect 0 "a file name with a newline in the tree" ci_run approved_pr
+mkdir -p "$repo/node_modules/x" && cp "$fixtures/osv-no-expiry.toml" "$repo/node_modules/x/osv-scanner.toml"
+commit "a file name with a newline, a vendored osv-scanner.toml"
+expect 0 "a file name with a newline, a vendored osv-scanner.toml" ci_run justified_pr
+mkdir -p "$repo/.github/actions/setup" && echo 'runs: {using: composite, steps: []}' >"$repo/.github/actions/setup/action.yml"
+commit "a local action"
+expect 1 "a local action added, no justification" ci_run feat_pr
 
 if [[ "$failures" -gt 0 ]]; then
   echo "$failures case(s) failed."

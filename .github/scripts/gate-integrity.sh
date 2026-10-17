@@ -2,31 +2,31 @@
 # Gate integrity: detects a pull request that weakens the Quality Gate
 # (SchoolEngine/.github#22). Copied as is into every SchoolEngine repository
 # and run by .github/workflows/gate-integrity.yml (pull_request_target), from
-# the DEFAULT branch: a PR is never judged by its own copy of this script.
+# the default branch: a PR is never judged by its own copy of this script.
 #
 # Every file of the PR is untrusted DATA: it is extracted with `git cat-file`,
-# parsed by yq, jq and Python's tomllib, never executed, and any text taken
-# from it is escaped before it reaches a workflow command (annotations) or is
-# printed between ::stop-commands:: markers (diffs).
+# parsed by yq, jq and Python, never executed, and any text taken from it is
+# escaped before it reaches a workflow command (annotations) or is printed
+# between ::stop-commands:: markers (diffs, files).
 #
 # Usage:
 #   gate-integrity.sh ci <base-ref> <head-ref>     from the repository root
 #   gate-integrity.sh check <base-dir> <head-dir>  two extracted trees (tests)
 #
-# Environment (all optional; without them no gate change can be approved):
+# Environment:
 #   PR_JSON_FILE           the PR as returned by GET /repos/{repo}/pulls/{n}
-#   PR_EVENTS_FILE         its issue events (GET /repos/{repo}/issues/{n}/events)
-#   PR_ACTION              the pull_request_target activity type
-#   GATE_CHANGE_APPROVERS  logins allowed to approve, comma or space separated
+#                          (body: the `## Gate change` section; user: the
+#                          author). Without it no gate change is accepted and
+#                          action SHAs are compared strictly.
 #   GATE_INTEGRITY_TODAY   YYYY-MM-DD, tests only
 # Requires bash 4+, git, yq (v4), jq and python3 (tomllib, 3.11 or later).
 #
 # Two kinds of findings (CI.md, "Gate integrity"):
 # - hard: never accepted;
-# - gate change: accepted only when an approver listed in
-#   GATE_CHANGE_APPROVERS, who is not the PR author, applied the
-#   `gate-change-approved` label to the current state of the PR, and the PR
-#   body has a non-empty `## Gate change` section.
+# - gate change: accepted only when the PR body has a `## Gate change`
+#   section with a justification of at least 20 letters or digits, HTML
+#   comments removed. The approval is the double agent review (code and
+#   security) recorded on the PR, not this script.
 set -euo pipefail
 
 readonly COMMON_JOBS=(pr-conventions gitleaks actionlint lint-yaml-markdown osv-scanner)
@@ -37,8 +37,8 @@ readonly GATE_IF='${{ !cancelled() }}'
 readonly CI_FILE=".github/workflows/ci.yml"
 readonly INTEGRITY_FILE=".github/workflows/gate-integrity.yml"
 readonly INTEGRITY_SCRIPT=".github/scripts/gate-integrity.sh"
-readonly APPROVAL_LABEL="gate-change-approved"
-readonly ALLOWED_SHELLS=" bash sh pwsh powershell python cmd "
+readonly ACTIONS_DIR=".github/actions"
+readonly DEPENDABOT="dependabot[bot]"
 readonly MAX_IGNORE_DAYS=180
 readonly MIN_JUSTIFICATION=20
 readonly DATE_RE='[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])'
@@ -48,6 +48,8 @@ gate_changes=0
 today="${GATE_INTEGRITY_TODAY:-$(date -u +%F)}"
 horizon=$(python3 -I -c 'import datetime, sys
 print(datetime.date.fromisoformat(sys.argv[1]) + datetime.timedelta(days=int(sys.argv[2])))' "$today" "$MAX_IGNORE_DAYS")
+author=""
+[[ -z "${PR_JSON_FILE:-}" ]] || author=$(jq -r '.user.login // ""' "$PR_JSON_FILE")
 
 # --- Output -----------------------------------------------------------------
 
@@ -93,7 +95,8 @@ show_diff() {
   return 1
 }
 
-yaml_json() { yq -o json '.' "$1"; }
+# The first document only: a second one is refused by check_workflow_rules.
+yaml_json() { yq -o json 'select(document_index == 0)' "$1"; }
 
 toml_json() {
   python3 -I -c 'import json, sys, tomllib
@@ -101,64 +104,35 @@ with open(sys.argv[1], "rb") as f:
     print(json.dumps(tomllib.load(f), default=str))' "$1"
 }
 
-# A workflow (JSON) with the action SHAs replaced: Dependabot bumps them.
+# A workflow (JSON) as compared with the base branch. Action SHAs are ignored
+# only in a Dependabot PR, and only when the action itself is unchanged
+# (`owner/repo@<sha>` keeps the owner and the repository).
 normalized() {
-  jq -S 'walk(if type == "object" and (.uses | type) == "string"
-              then .uses |= sub("@[0-9a-f]{40}$"; "@<sha>") else . end)' <<<"$1"
+  jq -S --arg author "$author" --arg bot "$DEPENDABOT" '
+    if $author == $bot then
+      walk(if type == "object" and (.uses | type) == "string"
+           then .uses |= sub("@[0-9a-f]{40}$"; "@<sha>") else . end)
+    else . end' <<<"$1"
 }
 
-# --- The approval of a gate change ------------------------------------------
+# --- The justification of a gate change -------------------------------------
 
-gate_change_section() {
-  jq -r '.body // ""' "$PR_JSON_FILE" | tr -d '\r' | awk '
-    /^##[[:space:]]+Gate change[[:space:]]*$/ { in_section = 1; next }
-    in_section && /^##?[[:space:]]/ { in_section = 0 }
-    in_section && /[[:alnum:]]/ && !/^[[:space:]]*<!--/ { found = 1 }
-    END { exit found ? 0 : 1 }'
-}
-
-# Prints the approver and succeeds, or prints why not and fails.
-gate_change_approval() {
-  local approver author login
-  if [[ -z "${PR_JSON_FILE:-}" || -z "${PR_EVENTS_FILE:-}" ]]; then
-    echo "no PR metadata"
-    return 1
-  fi
-  if [[ "${PR_ACTION:-}" == "synchronize" ]]; then
-    echo "new commits were pushed, which withdraws the approval: an approver re-applies the '$APPROVAL_LABEL' label"
-    return 1
-  fi
-  if ! gate_change_section; then
-    echo "the PR body has no '## Gate change' section with a justification"
-    return 1
-  fi
-  approver=$(jq -r --arg label "$APPROVAL_LABEL" --slurpfile pr "$PR_JSON_FILE" '
-    if ($pr[0].labels // [] | map(.name) | index($label)) == null then ""
-    else [.[] | select(.event == "labeled" and .label.name == $label)] | last | .actor.login // ""
-    end' "$PR_EVENTS_FILE")
-  author=$(jq -r '.user.login // ""' "$PR_JSON_FILE")
-  if [[ -z "$approver" ]]; then
-    echo "the '$APPROVAL_LABEL' label is not on the PR"
-    return 1
-  fi
-  if [[ "${approver,,}" == "${author,,}" ]]; then
-    echo "the '$APPROVAL_LABEL' label was applied by the PR author ($approver)"
-    return 1
-  fi
-  for login in ${GATE_CHANGE_APPROVERS//,/ }; do
-    if [[ "${login,,}" == "${approver,,}" ]]; then
-      echo "$approver"
-      return 0
-    fi
-  done
-  echo "the '$APPROVAL_LABEL' label was applied by $approver, who is not in GATE_CHANGE_APPROVERS"
-  return 1
+# Number of letters and digits in the `## Gate change` section of the PR
+# body, HTML comments removed first (an unterminated one runs to the end).
+justification_length() {
+  [[ -n "${PR_JSON_FILE:-}" ]] || { echo 0; return 0; }
+  python3 -I -c 'import json, re, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    body = (json.load(f).get("body") or "").replace("\r", "")
+body = re.sub(r"<!--.*?(?:-->|\Z)", "", body, flags=re.S)
+m = re.search(r"^##[ \t]+Gate change[ \t]*\n(.*?)(?=^#{1,2}[ \t]|\Z)", body, flags=re.M | re.S)
+print(sum(c.isalnum() for c in m.group(1)) if m else 0)' "$PR_JSON_FILE"
 }
 
 # --- ci.yml -----------------------------------------------------------------
 
 # The keys outside `jobs`, which change how every job runs. Tool versions and
-# their sha256 aside: bumped by hand and reviewed as such.
+# their sha256 are checked by check_tool_pins instead.
 top_keys() {
   jq -S '{name, on, permissions, defaults, concurrency,
           env: ((.env // {}) | with_entries(select(.key | test("_(VERSION|SHA256)$") | not)))}' <<<"$1"
@@ -170,13 +144,39 @@ gate_job() {
 
 has_job() { jq -e --arg job "$2" '.jobs | has($job)' <<<"$1" >/dev/null; }
 
+# `*_VERSION` and `*_SHA256` of ci.yml: well formed, never downgraded, and a
+# tool's version and sha256 change together. One JSON string per finding.
+check_tool_pins() {
+  local base=$1 head=$2 finding
+  while IFS= read -r finding; do
+    hard_error "$CI_FILE env: $(jq -r '.' <<<"$finding")."
+  done < <(jq -c --argjson b "$base" '
+    def version_ok: test("^[0-9]+(\\.[0-9]+){1,3}$");
+    def parts: split(".") | map(tonumber);
+    ($b.env // {} | map_values(tostring)) as $be
+    | (.env // {} | map_values(tostring)) as $he
+    | ( ($he | to_entries[] | select(.key | test("_VERSION$")) | .key as $k | .value as $v
+         | if ($v | version_ok | not) then "\($k) \($v | tojson) is not a version (digits and dots)"
+           elif ($be[$k] // "" | version_ok) and (($v | parts) < ($be[$k] | parts))
+           then "\($k) downgraded from \($be[$k]) to \($v)"
+           else empty end),
+        ($he | to_entries[] | select(.key | test("_SHA256$"))
+         | select(.value | test("^[0-9a-f]{64}$") | not) | "\(.key) is not a sha256 (64 lowercase hex digits)"),
+        ($he | keys[] | select(test("_VERSION$")) | sub("_VERSION$"; "") as $t
+         | select(($he["\($t)_SHA256"] != null) and ($be["\($t)_VERSION"] != null) and ($be["\($t)_SHA256"] != null))
+         | select(($he["\($t)_VERSION"] != $be["\($t)_VERSION"]) != ($he["\($t)_SHA256"] != $be["\($t)_SHA256"]))
+         | "\($t)_VERSION and \($t)_SHA256 must change together") )
+    | tojson' <<<"$head")
+}
+
 check_ci() {
-  local base_file=$1 head_file=$2 head base job missing coe
+  local base_file=$1 head_file=$2 head base='{}' job missing coe
   if [[ ! -f "$head_file" ]]; then
     hard_error "$CI_FILE is missing."
     return 0
   fi
   head=$(yaml_json "$head_file")
+  [[ ! -f "$base_file" ]] || base=$(yaml_json "$base_file")
 
   for job in "${COMMON_JOBS[@]}" "$GATE_JOB"; do
     has_job "$head" "$job" || hard_error "Mandatory job '$job' is missing from $CI_FILE."
@@ -195,11 +195,12 @@ check_ci() {
   coe=$(jq -r '[.jobs | paths | select(.[-1] == "continue-on-error") | map(tostring) | join(".")] | join(", ")' <<<"$head")
   [[ -z "$coe" ]] || hard_error "continue-on-error is forbidden in $CI_FILE (a failing job would pass the gate): $coe."
 
+  check_tool_pins "$base" "$head"
+
   if [[ ! -f "$base_file" ]]; then
     notice "No $CI_FILE on the base branch: base comparison skipped."
     return 0
   fi
-  base=$(yaml_json "$base_file")
 
   if ! show_diff "base: $CI_FILE outside jobs" "pr: $CI_FILE outside jobs" \
       <(top_keys "$base") <(top_keys "$head"); then
@@ -220,6 +221,11 @@ check_ci() {
 
 # --- Every workflow ---------------------------------------------------------
 
+list_files() {
+  [[ -d "$1/$2" ]] || return 0
+  (cd "$1" && find "$2" -type f -print | sort)
+}
+
 list_workflows() {
   [[ -d "$1/.github/workflows" ]] || return 0
   (cd "$1" && find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print | sort)
@@ -228,14 +234,27 @@ list_workflows() {
 # Rules that hold for every workflow file of the PR.
 check_workflow_rules() {
   local path=$1 file=$2 json found
+  found=$(yq ea '[.] | length' "$file")
+  if [[ "$found" != "1" ]]; then
+    hard_error "$path: exactly one YAML document expected, found $found."
+    return 0
+  fi
+  found=$(yq '[.. | select(tag == "!!map") | select((keys | length) != (keys | unique | length))] | length' "$file")
+  [[ "$found" == "0" ]] || hard_error "$path: duplicate keys in a mapping (the last one silently wins)."
   found=$(yq '[.. | select(kind == "alias" or anchor != "" or ((path | length) > 0 and (path | .[-1]) == "<<"))] | length' "$file")
   [[ "$found" == "0" ]] || hard_error "$path: YAML anchors, aliases and merge keys are forbidden (they hide a change)."
   json=$(yaml_json "$file")
 
-  found=$(jq -r --arg allowed "$ALLOWED_SHELLS" '
+  jq -e 'type == "object" and has("permissions")' <<<"$json" >/dev/null \
+    || hard_error "$path: a top-level 'permissions:' is required (least privilege)."
+
+  found=$(jq -r '
     [paths(type == "string") as $p | select($p[-1] == "shell") | getpath($p)
-     | select(. as $s | $allowed | contains(" \($s) ") | not)] | unique | join(", ")' <<<"$json")
+     | select(IN("bash", "sh", "pwsh", "powershell", "python", "cmd") | not)] | unique | map(tojson) | join(", ")' <<<"$json")
   [[ -z "$found" ]] || hard_error "$path: custom shell forbidden (a shell template can turn every step into a no-op): $found."
+
+  found=$(jq -r '[.jobs // {} | to_entries[] | select((.value.name // "") | tostring | contains("${{")) | .key] | join(", ")' <<<"$json")
+  [[ -z "$found" ]] || hard_error "$path: a job name built from an expression could take a required check's name: $found."
 
   found=$(jq -r --arg ci "$CI_FILE" --arg integrity "$INTEGRITY_FILE" --arg path "$path" '
     [.jobs // {} | to_entries[]
@@ -261,6 +280,16 @@ check_workflow_rules() {
   [[ -z "$found" ]] || hard_error "$path: write permission forbidden (a job could set statuses, labels or code): $found."
 }
 
+# How a workflow is compared with the base branch: gate-integrity.yml always
+# strictly, the others through `normalized`.
+comparable() {
+  if [[ "$1" == "$INTEGRITY_FILE" ]]; then
+    yaml_json "$2" | jq -S '.'
+  else
+    normalized "$(yaml_json "$2")"
+  fi
+}
+
 check_workflows() {
   local base_dir=$1 head_dir=$2 path
   while IFS= read -r path; do
@@ -270,7 +299,7 @@ check_workflows() {
       gate_change "new workflow $path (a workflow can report checks and act on the repository)."
       untrusted "$(cat "$head_dir/$path")"
     elif ! show_diff "base: $path" "pr: $path" \
-        <(normalized "$(yaml_json "$base_dir/$path")") <(normalized "$(yaml_json "$head_dir/$path")"); then
+        <(comparable "$path" "$base_dir/$path") <(comparable "$path" "$head_dir/$path"); then
       gate_change "workflow $path changed (diff above)."
     fi
   done < <(list_workflows "$head_dir")
@@ -289,6 +318,18 @@ check_workflows() {
   elif [[ -f "$base_dir/$INTEGRITY_SCRIPT" ]] && ! cmp -s "$base_dir/$INTEGRITY_SCRIPT" "$head_dir/$INTEGRITY_SCRIPT"; then
     gate_change "$INTEGRITY_SCRIPT changed (once merged, it judges the next PRs)."
   fi
+
+  # Local actions run inside the jobs that use them, common jobs included.
+  while IFS= read -r path; do
+    if [[ ! -f "$head_dir/$path" ]]; then
+      gate_change "local action file $path was removed."
+    elif [[ ! -f "$base_dir/$path" ]]; then
+      gate_change "local action file $path was added."
+      untrusted "$(cat "$head_dir/$path")"
+    elif ! show_diff "base: $path" "pr: $path" "$base_dir/$path" "$head_dir/$path"; then
+      gate_change "local action file $path changed (diff above)."
+    fi
+  done < <({ list_files "$base_dir" "$ACTIONS_DIR"; list_files "$head_dir" "$ACTIONS_DIR"; } | sort -u)
 }
 
 # --- The ignore files (ADR-014) ---------------------------------------------
@@ -378,10 +419,13 @@ check_osv_toml() {
     | .[]' <<<"$json")
 }
 
+# Directories never scanned for osv-scanner.toml: dependencies and build
+# output, not the repository's own configuration.
+readonly SKIPPED_DIR_RE='(^|/)(\.git|node_modules|\.dart_tool|build|vendor)/'
+
 list_ignores() {
-  (cd "$1" && find . -path ./.git -prune -o -path '*/node_modules' -prune -o \
-     \( -name osv-scanner.toml -o -path ./.gitleaks.toml -o -path ./.gitleaksignore \) -type f -print \
-   | sed 's|^\./||' | sort)
+  (cd "$1" && find . -type f \( -name osv-scanner.toml -o -path ./.gitleaks.toml -o -path ./.gitleaksignore \) -print \
+   | sed 's|^\./||' | { grep -Ev "$SKIPPED_DIR_RE" || true; } | sort)
 }
 
 check_ignores() {
@@ -415,9 +459,15 @@ extract() {
     path=${entry#*$'\t'}
     [[ "$meta" == *" blob "* ]] || continue
     case "$path" in
-      .github/workflows/*.yml | .github/workflows/*.yaml | "$INTEGRITY_SCRIPT" | .gitleaks.toml | .gitleaksignore | osv-scanner.toml | */osv-scanner.toml) ;;
+      .github/workflows/*.yml | .github/workflows/*.yaml | "$INTEGRITY_SCRIPT" | "$ACTIONS_DIR"/* | .gitleaks.toml | .gitleaksignore) ;;
+      osv-scanner.toml | */osv-scanner.toml) [[ ! "$path" =~ $SKIPPED_DIR_RE ]] || continue ;;
       *) continue ;;
     esac
+    # git refuses such paths; never write outside the directory regardless.
+    if [[ "/$path/" == *"/../"* || "/$path/" == *"/./"* || "/$path/" == *"/.git/"* || "$path" == /* ]]; then
+      hard_error "Refused path in the tree: $path."
+      continue
+    fi
     mkdir -p "$dir/$(dirname "$path")"
     git cat-file blob "${meta##* }" >"$dir/$path"
   done < <(git ls-tree -r -z "$ref")
@@ -426,7 +476,7 @@ extract() {
 check_trees() {
   echo "== $CI_FILE against the base branch"
   check_ci "$1/$CI_FILE" "$2/$CI_FILE"
-  echo "== Workflows and the checker"
+  echo "== Workflows, local actions and the checker"
   check_workflows "$1" "$2"
   echo "== Ignore files (gitleaks, osv-scanner)"
   check_ignores "$1" "$2"
@@ -442,14 +492,15 @@ run_ci() {
 }
 
 verdict() {
-  local approval
+  local length
   if [[ "$gate_changes" -gt 0 ]]; then
-    if approval=$(gate_change_approval); then
-      echo "::warning::$(escape "$gate_changes gate change(s) approved by $approval (label '$APPROVAL_LABEL', '## Gate change' section).")"
+    length=$(justification_length)
+    if [[ "$length" -ge "$MIN_JUSTIFICATION" ]]; then
+      echo "::warning::$gate_changes gate change(s) justified in the '## Gate change' section: the double agent review (code and security) recorded on the PR is the approval."
       [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] \
-        || echo "**Gate change**: $gate_changes change(s) to the Quality Gate, approved by $approval with the \`$APPROVAL_LABEL\` label. Double agent review and Céline's explicit approval required before merge." >>"$GITHUB_STEP_SUMMARY"
+        || echo "**Gate change**: $gate_changes change(s) to the Quality Gate, justified in the PR body. The double agent review (code and security) recorded on the PR is the approval; Céline's explicit go is required to merge." >>"$GITHUB_STEP_SUMMARY"
     else
-      echo "::error::$(escape "$gate_changes gate change(s) not approved: $approval (CI.md, Gate integrity).")"
+      echo "::error::$gate_changes gate change(s) without a justification: add a '## Gate change' section of at least $MIN_JUSTIFICATION letters or digits, HTML comments excluded (CI.md, Gate integrity)."
       hard=$((hard + 1))
     fi
   fi

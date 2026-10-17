@@ -23,7 +23,7 @@ Common jobs, in every template:
 | `osv-scanner` | Vulnerable dependencies (osv-scanner) | a high or critical vulnerability (CVSS 7.0 or more), or one without a score, in a committed lockfile |
 | `quality-gate` | **Quality Gate** | any job above that did not succeed |
 
-Next to `ci.yml`, every repository has `.github/workflows/gate-integrity.yml` ([template](workflow-templates/gate-integrity.yml)), the second required check `Gate integrity`: see [Gate integrity](#gate-integrity).
+Next to `ci.yml`, every repository has `.github/workflows/gate-integrity.yml` ([template](workflow-templates/gate-integrity.yml)), the `Gate integrity` check: see [Gate integrity](#gate-integrity).
 
 Placeholders that a scaffold ticket must fill are marked `TODO(scaffold)` in the templates. They fail closed: an unfilled template is red, never green on nothing.
 
@@ -65,59 +65,54 @@ Rules, all learned on TheOpenMusicBox:
 
 ## Gate integrity
 
-`Quality Gate` lives in each PR's own `ci.yml`, and `protect-develop` requires no approving review: a PR can weaken the gate that judges it. `Gate integrity` is the detective control decided by Céline on 2026-10-16 (SchoolEngine/.github#22) instead of mandatory approvals. It is the **second required check** of `protect-develop` (once enabled, see [`rulesets/README.md`](rulesets/README.md#enabling-the-gate-integrity-check)).
+`Quality Gate` lives in each PR's own `ci.yml`, and `protect-develop` requires no approving review: a PR can weaken the gate that judges it. `Gate integrity` is the detective control decided by Céline on 2026-10-16 (SchoolEngine/.github#22) instead of mandatory approvals. It becomes the **second required check** of `protect-develop` through a separate activation PR, once every repository has it ([`rulesets/README.md`](rulesets/README.md#enabling-the-gate-integrity-check)).
 
-### How it runs, and why it cannot be rewritten by the PR it judges
+### How it runs, and why the PR it judges cannot rewrite it
 
-- It is a separate workflow, `.github/workflows/gate-integrity.yml`, on **`pull_request_target`**: GitHub takes that workflow file, and the checker `.github/scripts/gate-integrity.sh` it runs, from the **default branch**, never from the PR. A change to either only takes effect after its own merge, and is itself a gate change.
-- The PR is **data only**. The job checks out the default branch (no `ref:`), fetches the merge commit GitHub computed (`refs/pull/<n>/merge`) as git objects, and reads the files it needs with `git cat-file`: nothing from the PR is checked out, built, installed or executed. The base of the comparison is the first parent of that merge commit (the tip of `develop`), so a PR behind `develop` is not blamed for what `develop` changed since.
-- No PR field is interpolated into a script: only the PR number and SHAs go through `env:`; the PR metadata and label events are saved as JSON files and read with `jq`. Text from the PR is escaped in annotations (`%`, CR, LF, `::`) and printed between `::stop-commands::` markers in diffs, so it cannot issue workflow commands.
-- `permissions: {}` at the top; the checking job has `contents: read` and `pull-requests: read`; a second job with `pull-requests: write`, which reads nothing from the PR but its number, removes the approval label when new commits arrive. No secret. Actions pinned by SHA, yq by version and sha256; `python3` (tomllib), `jq` and `git` come from the runner image.
-- It re-runs on every activity that can change the verdict: new commits, title or body edited, label added or removed. No re-run by hand is needed after editing the PR body.
-- It runs on fork PRs too (nothing is executed).
+- It is a separate workflow, `.github/workflows/gate-integrity.yml`, on **`pull_request_target`**. GitHub takes that workflow file, and the checker `.github/scripts/gate-integrity.sh` it runs, from the repository's **default branch** (`develop`), never from the PR. GitHub's documentation used to say "the PR base branch"; since our PRs target `develop`, the default branch, both readings give the same file. A change to either file only takes effect after its own merge, and is itself a gate change.
+- The PR is **data only**. The job checks out the default branch (no `ref:`), fetches the merge commit GitHub computed (`refs/pull/<n>/merge`) as git objects, and reads the files it needs with `git cat-file`: nothing from the PR is checked out, built, installed or executed. The base of the comparison is the first parent of that merge commit (the tip of `develop`).
+- No PR field is interpolated into a script: only the PR number and SHAs go through `env:`; the PR (body, author) is saved as a JSON file read by `jq` and Python. Text from the PR is escaped in annotations and fenced by `::stop-commands::` markers in diffs, so it cannot issue workflow commands.
+- `permissions: {}` at the top, `contents: read` and `pull-requests: read` for the job, no secret. Actions pinned by SHA, yq by version and sha256; `python3`, `jq`, `git` and `gh` come from the runner image. `tests/gate-integrity/run.sh` asserts these invariants on the workflow file and that this repository's copy is the template.
+- It re-runs on new commits and when the title or body is edited (`opened`, `synchronize`, `reopened`, `edited`). It runs on fork PRs too (nothing is executed).
 
 ### What it checks
 
-| Finding | Approvable? |
+| Finding | With a `## Gate change` justification? |
 |---|---|
-| A common job missing from `ci.yml` (`pr-conventions`, `gitleaks`, `actionlint`, `lint-yaml-markdown`, `osv-scanner`), or `quality-gate` missing or renamed | no |
-| The gate's `if:` not exactly `${{ !cancelled() }}`; a job not in its `needs:` | no |
-| `continue-on-error` anywhere in `ci.yml` | no |
-| In any workflow: a YAML anchor, alias or merge key (it hides a change from the comparison); a custom `shell` (only `bash`, `sh`, `pwsh`, `powershell`, `python`, `cmd`: `shell: 'true {0}'` would turn every step into a no-op); a job named like a required check (`Quality Gate` outside `ci.yml`'s `quality-gate`, `Gate integrity` outside `gate-integrity.yml`'s `gate-integrity`) | no |
-| In any workflow but `gate-integrity.yml`: a `pull_request_target` or `workflow_run` trigger, or a `write` permission (`write-all` included) | no |
-| `gate-integrity.yml` or the checker removed | no |
-| An ignore without a valid justification and expiry ([Ignore files](#ignore-files)) | no |
-| A job of the base branch removed from `ci.yml` | yes |
-| The definition of a common job or of the gate changed (action SHAs aside, so Dependabot bumps pass; the gate's `needs:` aside, so adding a job passes) | yes |
-| `ci.yml` changed outside `jobs`: `name`, `on`, `permissions`, `defaults`, `concurrency`, or `env` except the `*_VERSION` and `*_SHA256` keys (a new `BASH_ENV` or a lowered `COVERAGE_MIN` is a gate change) | yes |
-| Any other workflow added or changed (action SHAs aside), `gate-integrity.yml` included; the checker changed | yes |
-| `.gitleaks.toml` without `[extend] useDefault = true`, or with `disabledRules` | yes |
+| A common job missing from `ci.yml` (`pr-conventions`, `gitleaks`, `actionlint`, `lint-yaml-markdown`, `osv-scanner`), or `quality-gate` missing or renamed | refused |
+| The gate's `if:` not exactly `${{ !cancelled() }}`; a job not in its `needs:`; `continue-on-error` anywhere in `ci.yml` | refused |
+| In any workflow: more than one YAML document, duplicate keys in a mapping, a YAML anchor, alias or merge key; no top-level `permissions:`; a `shell` other than exactly `bash`, `sh`, `pwsh`, `powershell`, `python` or `cmd`; a job `name:` containing `${{`; a job named like a required check (`Quality Gate` outside `ci.yml`'s `quality-gate`, `Gate integrity` outside `gate-integrity.yml`'s `gate-integrity`) | refused |
+| In any workflow but `gate-integrity.yml`: a `pull_request_target` or `workflow_run` trigger, or a `write` permission (`write-all` included) | refused |
+| `ci.yml` `env:`: a `*_VERSION` that is not digits and dots, a version lower than on the base branch, a `*_SHA256` that is not 64 lowercase hex digits, a tool whose `*_VERSION` and `*_SHA256` do not change together | refused |
+| `gate-integrity.yml` or the checker removed; an ignore without a valid justification and expiry ([Ignore files](#ignore-files)) | refused |
+| A job of the base branch removed from `ci.yml`; the definition of a common job or of the gate changed (the gate's `needs:` aside, so adding a job passes) | gate change |
+| `ci.yml` changed outside `jobs`: `name`, `on`, `permissions`, `defaults`, `concurrency`, or `env` except the `*_VERSION` / `*_SHA256` pins (a new `BASH_ENV` or a lowered `COVERAGE_MIN` is a gate change) | gate change |
+| Any other workflow added or changed, `gate-integrity.yml` included; the checker changed; any file under `.github/actions/` added, changed or removed | gate change |
+| `.gitleaks.toml` without `[extend] useDefault = true`, or with `disabledRules` | gate change |
 
-Changes to stack jobs (adding a job, a step, a stack job's commands) are not gate changes: they are reviewed as usual and the gate still requires them to succeed.
+**Action SHAs.** A changed SHA in `uses:` is ignored only in a PR opened by `dependabot[bot]`, and only when the action itself (`owner/repo`) is unchanged; in `gate-integrity.yml` it is never ignored. A person changing a SHA, or Dependabot bumping an action of `gate-integrity.yml`, makes a gate change: add the `## Gate change` section to the PR body (editing the body of a Dependabot PR is fine; pushing to its branch is not).
+
+Changes to stack jobs (adding a job, a step, a stack job's commands) and matrices are not gate changes: matrix jobs get the matrix values appended in parentheses, so they never carry a required check's exact name.
 
 ### Approving a gate change
 
-A gate change passes only when **both**:
+The checker only asks for a reason: the PR body has a `## Gate change` section whose text, **HTML comments removed entirely**, has at least 20 letters or digits. The approval itself is the **double agent review (code and security) recorded on the PR**, then Céline's explicit go to merge, as for every PR. There is no label and no human approver mechanism. The section is re-read when the body is edited: no re-run by hand is needed.
 
-1. the PR body has a non-empty `## Gate change` section that justifies it (an HTML comment alone does not count);
-2. the label **`gate-change-approved`** is on the PR, and its last application was by a login listed in the organisation variable `GATE_CHANGE_APPROVERS` who is **not the PR author** (checked from the PR's label events, not from the label alone).
+### Residual risks
 
-New commits withdraw the approval: the label is removed and the run of that push ignores it; the approver reviews again and re-applies it, which re-runs the check. The PR still needs the double agent review (one of them on security) and Céline's explicit approval before merge; the run summary records who approved.
+It is a detective control with a narrow preventive core, not a guarantee:
 
-### Residual risks (stated honestly)
-
-It is a **detective** control with a narrow preventive core, not a guarantee:
-
-- **Owners are trusted.** The PRs are opened by an organisation owner account and `protect-develop` requires 0 approvals. It has no bypass list, but an owner can still edit the ruleset, the `GATE_CHANGE_APPROVERS` variable or the labels, and an approval is only as independent as the person behind the approving account. The control makes a weakening visible and attributable; it does not stop an owner who means it.
-- **Check name spoofing.** A required check is matched by name and source app (GitHub Actions), not by workflow. A PR can add a `pull_request` workflow with a job named `Gate integrity` or `Quality Gate`; the real `Gate integrity` flags it as a hard error, but if the spoofing run reports later, the merge box may show the name green. Mitigation: the merge box lists every check run, and a red `Gate integrity` run on the same commit means do not merge. Only an organisation **required workflow** (ruleset `workflows` rule) removes this; see the open question in SchoolEngine/.github#22.
-- **After merge.** A change to `gate-integrity.yml` or the checker is approved in its own PR, then judges every later PR: the approval of such a PR is the real control.
-- **Not covered:** stack jobs that are made weaker but still succeed (a test command that tests less), and changes outside the files read (a lint configuration, a `package.json` script). Those are for review.
+- **Owners are trusted.** The PRs are opened by an organisation owner account and `protect-develop` requires 0 approvals: an owner can still change the ruleset or merge after a review that missed something. The control makes a weakening visible and attributable.
+- **A new or changed workflow runs before review.** A workflow added on `pull_request` runs on the PR's own commits as soon as they are pushed, before anyone reads it (read-only token, no secret, but it can report checks). `Gate integrity` flags it; reviewers read every workflow change before anything else.
+- **Required checks are matched by name.** Other workflows of a PR can report checks; the checker refuses the reserved names, and reviewers confirm that `Gate integrity` and `Quality Gate` each appear once on the head commit.
+- **After merge.** An approved change to `gate-integrity.yml` or the checker judges every later PR: the review of such a PR is the real control.
+- **Not covered:** stack jobs made weaker while still succeeding (a test command that tests less), and files the checker does not read (a lint configuration, a `package.json` script). Those are for review.
 
 ### Rolling it out to a repository
 
-One `ci(quality-gate)` PR per repository copies `.github/workflows/gate-integrity.yml` and `.github/scripts/gate-integrity.sh` from this repository unchanged and creates the `gate-change-approved` label. That PR gets no `Gate integrity` run (the workflow is not on `develop` yet); the next ones do. The required check is enabled in `protect-develop` only once every repository has both files ([`rulesets/README.md`](rulesets/README.md#enabling-the-gate-integrity-check)).
+One `ci(quality-gate)` PR per repository copies `.github/workflows/gate-integrity.yml` and `.github/scripts/gate-integrity.sh` from this repository unchanged. That PR gets no `Gate integrity` run (the workflow is not on `develop` yet); the next ones do. Canary, activation, break-glass and new repositories: [`rulesets/README.md`](rulesets/README.md#enabling-the-gate-integrity-check).
 
-To change the checker: change it and its tests here (`tests/gate-integrity/run.sh`, run by the `scripts` job of this repository's `ci.yml`), then copy it into each repository in a PR approved as a gate change.
+To change the checker: change it and its tests here (`tests/gate-integrity/run.sh`, run by the `scripts` job of this repository's `ci.yml`), then copy it into each repository in a PR justified as a gate change.
 
 ### Ignore files
 
@@ -157,7 +152,7 @@ In a pnpm repository, `.prettierignore` lists `*.md`, `*.yml` and `*.yaml` (plus
 
 ## Bumping a tool version
 
-Versions downloaded in `run:` steps are not seen by Dependabot. To bump one: change the version **and its `*_SHA256`** in the `env:` block of the template here, then in each repository's `ci.yml`. Take the sha256 from the asset digest GitHub shows on the release page (or `gh release view`), cross-checked with a local `sha256sum` of the downloaded asset and, when the project publishes one, its checksum file (the Flutter value comes from the Flutter release index). A version bump with its sha256 is not a gate change. Actions in `uses:` are bumped by Dependabot (`github-actions` ecosystem), keeping the SHA and the version comment in sync.
+Versions downloaded in `run:` steps are not seen by Dependabot. To bump one: change the version **and its `*_SHA256`** in the `env:` block of the template here, then in each repository's `ci.yml`. Take the sha256 from the asset digest GitHub shows on the release page (or `gh release view`), cross-checked with a local `sha256sum` of the downloaded asset and, when the project publishes one, its checksum file (the Flutter value comes from the Flutter release index). A version bump with its sha256 is not a gate change; `Gate integrity` refuses a malformed version, a downgrade, and a version or sha256 changed alone. Actions in `uses:` are bumped by Dependabot (`github-actions` ecosystem), keeping the SHA and the version comment in sync.
 
 ## Runners: GitHub-hosted now, self-hosted later
 

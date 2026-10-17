@@ -4,7 +4,7 @@ Organisation rulesets of SchoolEngine, kept as code. The JSON file is the source
 
 | File | Ruleset | What it enforces |
 |---|---|---|
-| `protect-develop.json` | `protect-develop` (id 25146431) | Default branch of every repository: no deletion, no force-push, linear history, PR required (squash only, review threads resolved, stale approvals dismissed), required checks `Quality Gate` and `Gate integrity` (GitHub Actions, integration id 15368, branch required to be up to date with `develop`). No bypass actor. `Gate integrity` is in the file before it is live: see [Enabling the Gate integrity check](#enabling-the-gate-integrity-check). |
+| `protect-develop.json` | `protect-develop` (id 25146431) | Default branch of every repository: no deletion, no force-push, linear history, PR required (squash only, review threads resolved, stale approvals dismissed), required check `Quality Gate` (GitHub Actions, integration id 15368, branch required to be up to date with `develop`). No bypass actor. |
 
 The file holds only the fields accepted by the API (`name`, `target`, `enforcement`, `bypass_actors`, `conditions`, `rules`): no `id`, timestamps, `_links`, `node_id` or `source`. It can be re-imported as is, with `PUT` on the existing ruleset or `POST` on a new organisation.
 
@@ -40,12 +40,10 @@ The cost: after every merge, the other open PRs of the repository are out of dat
 
 ## Enabling the Gate integrity check
 
-`Gate integrity` (SchoolEngine/.github#22, [CI.md](../CI.md#gate-integrity)) was added to `protect-develop.json` before it is applied, the one deliberate gap between the file and the live ruleset. A required check that a repository never reports blocks every merge there, and a `pull_request_target` workflow only runs once it is on the default branch. So the order is fixed:
+`Gate integrity` (SchoolEngine/.github#22, [CI.md](../CI.md#gate-integrity)) is not in `protect-develop.json` yet: it is added by a separate **activation PR**, applied right after its merge. A required check that a repository never reports blocks every merge there, and a `pull_request_target` workflow only runs once it is on the default branch, so the order is fixed:
 
-1. Merge SchoolEngine/.github#24.
-2. In every repository, a rollout PR adds `.github/workflows/gate-integrity.yml` and `.github/scripts/gate-integrity.sh` (copies from this repository) and creates the label: `gh label create gate-change-approved -R SchoolEngine/<repo> --color B60205 --description "Gate change approved (CI.md, Gate integrity)"`. The rollout PR itself gets no `Gate integrity` run (the workflow is not on `develop` yet).
-3. An organisation owner sets the approvers (logins, comma separated): `gh variable set GATE_CHANGE_APPROVERS --org SchoolEngine --visibility all --body "<login>"`.
-4. Check that every repository has both files on `develop` (each line must say `ok`):
+1. **Rollout.** In every repository, a PR copies `.github/workflows/gate-integrity.yml` and `.github/scripts/gate-integrity.sh` from this repository unchanged. That PR gets no `Gate integrity` run (the workflow is not on `develop` yet).
+2. **Canary.** In every repository, a trivial PR (a typo fix, for example) must show `Gate integrity` green, and a deliberately weakened draft PR (a job removed from the gate's `needs:`) must show it red; close the draft. Check that every repository has both files on `develop` (each line must say `ok`):
 
    ```bash
    for r in $(gh repo list SchoolEngine --no-archived --json name --jq '.[].name'); do
@@ -56,13 +54,24 @@ The cost: after every merge, the other open PRs of the repository are out of dat
    done
    ```
 
-5. Céline (organisation owner) applies the ruleset: the dry-run must show only the added `Gate integrity` check, then `--apply`:
+3. **Activation PR** in this repository: adds `{"context": "Gate integrity", "integration_id": 15368}` to the required checks of `protect-develop.json`. After its merge, Céline (organisation owner) applies it; the dry-run must show only the added check:
 
    ```bash
    scripts/apply-ruleset.sh rulesets/protect-develop.json
    scripts/apply-ruleset.sh --apply rulesets/protect-develop.json
    ```
 
-6. Check on one repository: `gh api repos/SchoolEngine/backend/rules/branches/develop --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks'` lists both checks.
+4. **Check** on one repository: `gh api repos/SchoolEngine/backend/rules/branches/develop --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks'` lists both checks.
+5. **Open PRs** opened before the activation have no `Gate integrity` run on their head commit: use **Update branch** (or push a commit, or edit the PR body) to trigger it.
 
-Rollback: remove the `Gate integrity` entry from the file in a PR and apply it again.
+**New repositories** get `gate-integrity.yml` and the checker in their scaffold, before their first PR: under the ruleset, a repository without them cannot merge anything.
+
+**Break-glass** (the check is broken everywhere, for example a GitHub change to `pull_request_target`): Céline, as organisation owner, removes the check from the live ruleset through the API, then records it in a PR so the file matches again:
+
+```bash
+jq '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks)
+    |= map(select(.context != "Gate integrity"))' rulesets/protect-develop.json > /tmp/protect-develop.json
+scripts/apply-ruleset.sh --apply /tmp/protect-develop.json
+```
+
+The PR that fixes the check then restores the entry, and it is applied again after its merge.
