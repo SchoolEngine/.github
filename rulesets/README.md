@@ -23,7 +23,7 @@ The file holds only the fields accepted by the API (`name`, `target`, `enforceme
    scripts/apply-ruleset.sh --apply rulesets/protect-develop.json
    ```
 
-   The script is idempotent (a second run reports nothing to do). It refuses a file without a `bypass_actors` key (`[]` for none: without the key, a `PUT` keeps the live bypass list and the file stops describing the ruleset), and a file that declares bypass actors unless `--allow-bypass` is given (`protect-develop` has none by design). The equivalent raw call is `gh api -X PUT orgs/SchoolEngine/rulesets/25146431 --input rulesets/protect-develop.json`.
+   The script is idempotent (a second run reports nothing to do). It refuses a file without a `bypass_actors` key (`[]` for none: without the key, a `PUT` keeps the live bypass list and the file stops describing the ruleset), and a file that declares bypass actors unless `--allow-bypass` is given (`protect-develop` has none by design). A bypass actor with `actor_id` 0, null or missing (a placeholder) is refused even with `--allow-bypass`. The equivalent raw call is `gh api -X PUT orgs/SchoolEngine/rulesets/25146431 --input rulesets/protect-develop.json`.
 
 4. Check the result on one repository: `gh api repos/SchoolEngine/backend/rules/branches/develop`.
 

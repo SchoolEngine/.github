@@ -77,6 +77,16 @@ expect 1 "not a ruleset" - -- "$(ruleset '{name}' notruleset.json)"
 bypass=$(ruleset '.bypass_actors = [{"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}]' bypass.json)
 expect 1 "bypass actor without --allow-bypass" - -- --apply "$bypass"
 expect 0 "bypass actor with --allow-bypass, --apply" "PUT orgs/SchoolEngine/rulesets/1" -- --apply --allow-bypass "$bypass"
+for actor in '{"actor_id": 0, "actor_type": "Integration", "bypass_mode": "always"}' \
+             '{"actor_type": "Integration", "bypass_mode": "always"}' \
+             '{"actor_id": null, "actor_type": "Team", "bypass_mode": "pull_request"}'; do
+  placeholder=$(ruleset ".bypass_actors = [$actor]" placeholder.json)
+  expect 1 "bypass actor with actor_id 0 or missing, even with --allow-bypass ($(jq -c '.actor_id' <<<"$actor"))" \
+    - -- --apply --allow-bypass "$placeholder"
+done
+repo_placeholder=$(repo_ruleset '.bypass_actors = [{"actor_id": 0, "actor_type": "Integration", "bypass_mode": "always"}]' repo-placeholder.json)
+expect 1 "repository ruleset with a placeholder bypass actor" \
+  - -- --apply --allow-bypass --repo SchoolEngine/contracts "$repo_placeholder"
 expect 2 "malformed --repo" - -- --repo "SchoolEngine" "$root/rulesets/protect-develop.json"
 expect 2 "unknown option" - -- --force "$root/rulesets/protect-develop.json"
 

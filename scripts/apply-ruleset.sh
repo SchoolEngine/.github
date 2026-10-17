@@ -12,7 +12,8 @@
 # The file must declare `bypass_actors` explicitly (`[]` for none): without the
 # key, a PUT would keep the live bypass list and the file would no longer
 # describe the ruleset. A file that declares bypass actors is refused unless
-# --allow-bypass is given; the actors are printed in every case.
+# --allow-bypass is given; the actors are printed in every case. A bypass
+# actor with actor_id 0 or missing is always refused.
 # Requires gh (authenticated as an organisation owner or repository admin) and jq.
 set -euo pipefail
 
@@ -55,6 +56,15 @@ if ! jq -e 'type == "object" and has("name") and has("target") and has("rules")'
 fi
 if ! jq -e 'has("bypass_actors")' "$file" >/dev/null; then
   echo "Refused: $file has no bypass_actors key. Declare it, [] for none: without it the live bypass list would be kept." >&2
+  exit 1
+fi
+
+# A placeholder actor (actor_id 0, null or missing, e.g. copied from a draft)
+# is never applied, even with --allow-bypass: the API may resolve it to an
+# actor nobody chose.
+unresolved="$(jq '[.bypass_actors[]? | select((.actor_id // 0) == 0)] | length' "$file")"
+if [[ "$unresolved" != "0" ]]; then
+  echo "Refused: $file has $unresolved bypass actor(s) with actor_id 0 or missing: set the real id (an app id, a team id or a role id)." >&2
   exit 1
 fi
 
