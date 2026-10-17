@@ -116,8 +116,8 @@ pr_meta() {
   jq -n --arg author "$2" --arg body "$3" '{body: $body, user: {login: $author}}' >"$work/$1.pr.json"
 }
 justification="The node job moves to a separate workflow, reviewed in this PR."
-pr_meta feat Lynerah "Closes #1"
-pr_meta justified Lynerah $'Closes #1\n\n## Gate change\n\n'"$justification"$'\n\n## Review first\n'
+pr_meta feat contributor "Closes #1"
+pr_meta justified contributor $'Closes #1\n\n## Gate change\n\n'"$justification"$'\n\n## Review first\n'
 pr_meta dependabot "dependabot[bot]" "Bumps actions/checkout."
 # commits <name> <author:verified>...
 commits() {
@@ -130,15 +130,15 @@ commits() {
 }
 commits signed "dependabot[bot]:true" "dependabot[bot]:true"
 commits unsigned "dependabot[bot]:true" "dependabot[bot]:false"
-commits mixed "dependabot[bot]:true" "Lynerah:true"
-pr_meta no-section Lynerah $'Closes #1\n\n## Review first\n\n'"$justification"
-pr_meta empty-section Lynerah $'Closes #1\n\n## Gate change\n\n## Review first\n'
-pr_meta comment-only Lynerah $'Closes #1\n\n## Gate change\n\n<!-- '"$justification"$' -->\n\n## Review first\n'
-pr_meta multiline-comment Lynerah $'Closes #1\n\n## Gate change\n\n<!--\n'"$justification"$'\n-->\nok\n'
-pr_meta unterminated-comment Lynerah $'Closes #1\n\n## Gate change\n\nok <!-- '"$justification"
-pr_meta heading-in-comment Lynerah $'Closes #1\n\n<!--\n## Gate change\n\n'"$justification"$'\n-->\n'
-pr_meta short Lynerah $'Closes #1\n\n## Gate change\n\nNeeded, see issue.\n'
-pr_meta crlf Lynerah $'Closes #1\r\n\r\n## Gate change\r\n\r\n'"$justification"$'\r\n'
+commits mixed "dependabot[bot]:true" "contributor:true"
+pr_meta no-section contributor $'Closes #1\n\n## Review first\n\n'"$justification"
+pr_meta empty-section contributor $'Closes #1\n\n## Gate change\n\n## Review first\n'
+pr_meta comment-only contributor $'Closes #1\n\n## Gate change\n\n<!-- '"$justification"$' -->\n\n## Review first\n'
+pr_meta multiline-comment contributor $'Closes #1\n\n## Gate change\n\n<!--\n'"$justification"$'\n-->\nok\n'
+pr_meta unterminated-comment contributor $'Closes #1\n\n## Gate change\n\nok <!-- '"$justification"
+pr_meta heading-in-comment contributor $'Closes #1\n\n<!--\n## Gate change\n\n'"$justification"$'\n-->\n'
+pr_meta short contributor $'Closes #1\n\n## Gate change\n\nNeeded, see issue.\n'
+pr_meta crlf contributor $'Closes #1\r\n\r\n## Gate change\r\n\r\n'"$justification"$'\r\n'
 
 as_pr() {
   local name=$1
@@ -165,6 +165,8 @@ expect 0 "a step added to a stack job" feat_pr check \
 expect 0 "a matrix stack job (names get a suffix, never a check name)" feat_pr check \
   "$(head_of '.jobs.node.strategy.matrix.os = ["a", "b"]')"
 expect 0 "an explicit continue-on-error: false" feat_pr check "$(head_of '.jobs.node.continue-on-error = false')"
+expect 0 "Code quality (matrix value): only exact reserved names matter" feat_pr check \
+  "$(head_of '.jobs.node.name = "Code quality (${{ matrix.os }})" | .jobs.node.strategy.matrix.os = ["Quality Gate"]')"
 expect 0 "a matrix job name built from a matrix value" feat_pr check \
   "$(head_of '.jobs.node.name = "Test (${{ matrix.os }})" | .jobs.node.strategy.matrix.os = ["ubuntu", "macos"]')"
 expect 0 "a local action under .github/actions/" feat_pr check \
@@ -210,10 +212,12 @@ expect 1 "a job named Gate integrity in ci.yml" justified_pr check \
 # shellcheck disable=SC2016  # literal GitHub expressions
 expect 1 "a job name built from a format() expression" justified_pr check \
   "$(head_of '.jobs.node.name = "${{ format(''{0} {1}'', ''Quality'', ''Gate'') }}"')"
-expect 1 "a job name from a matrix value holding Quality Gate" justified_pr check \
+expect 1 "a job name that is only a matrix value (could be Quality Gate)" justified_pr check \
   "$(head_of '.jobs.node.name = "${{ matrix.x }}" | .jobs.node.strategy.matrix.x = ["Quality Gate"]')"
-expect 1 "a job name from a computed matrix" justified_pr check \
-  "$(head_of '.jobs.node.name = "${{ matrix.x }}" | .jobs.node.strategy.matrix = "${{ fromJSON(needs.a.outputs.m) }}"')"
+expect 1 "a reserved name concatenated from three matrix values" justified_pr check \
+  "$(head_of '.jobs.node.name = "${{ matrix.a }}${{ matrix.b }}${{ matrix.c }}" | .jobs.node.strategy.matrix = {"a": ["Qual"], "b": ["ity Ga"], "c": ["te"]}')"
+expect 1 "a reserved name built around a matrix value" justified_pr check \
+  "$(head_of '.jobs.node.name = "Qual${{ matrix.a }}te" | .jobs.node.strategy.matrix.a = ["ity Ga"]')"
 expect 1 "literal Gate next to a matrix value" justified_pr check \
   "$(head_of '.jobs.node.name = "Gate ${{ matrix.x }}" | .jobs.node.strategy.matrix.x = ["a"]')"
 expect 1 "a local action outside .github/actions/" justified_pr check \

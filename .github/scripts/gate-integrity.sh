@@ -312,17 +312,17 @@ check_workflow_rules() {
      | select(IN("bash", "sh", "pwsh", "powershell", "python", "cmd") | not)] | unique | map(tojson) | join(", ")' <<<"$json")
   [[ -z "$found" ]] || hard_error "$path: custom shell forbidden (a shell template can turn every step into a no-op): $found."
 
-  # A matrix name such as `Test (${{ matrix.os }})` is fine. Refused: any
-  # other expression in a job name, literal text with gate, quality or
-  # integrity next to an expression, and a matrix whose values could carry
-  # those words or are computed: each could build a required check's name.
-  found=$(jq -r '[.jobs // {} | to_entries[] | . as $job | (.value.name // "" | tostring) as $name
+  # An expression in a job name is accepted only as `<literal> (${{ matrix.<key> }})`:
+  # the rendered name then always ends with ")" and can never be a required
+  # check's exact name, whatever the matrix values. Any other form (several
+  # expressions, text around them, format()) could concatenate one.
+  found=$(jq -r '[.jobs // {} | to_entries[] | (.value.name // "" | tostring) as $name
     | select($name | contains("${{"))
-    | select(([$name | scan("[$][{][{](.*?)[}][}]") | .[0]] | any(test("^\\s*matrix[.][A-Za-z0-9_-]+\\s*$") | not))
-        or ($name | gsub("[$][{][{].*?[}][}]"; "") | ascii_downcase | test("gate|quality|integrity"))
-        or ($job.value.strategy // {} | tojson | ascii_downcase | test("gate|quality|integrity|[$][{][{]")))
+    | select(($name | test("^[^$]*[(][$][{][{] *matrix[.][A-Za-z0-9_-]+ *[}][}][)]$") | not)
+        or ($name | capture("^(?<literal>[^$]*)[(]").literal | ascii_downcase | gsub("^ +| +$"; "")
+            | IN("quality gate", "gate integrity")))
     | .key] | join(", ")' <<<"$json")
-  [[ -z "$found" ]] || hard_error "$path: a job name built from an expression other than a plain matrix value could take a required check's name: $found."
+  [[ -z "$found" ]] || hard_error "$path: an expression in a job name is only accepted as '<name> (\${{ matrix.<key> }})': $found."
 
   found=$(jq -r --arg ci "$CI_FILE" --arg integrity "$INTEGRITY_FILE" --arg path "$path" '
     [.jobs // {} | to_entries[]
