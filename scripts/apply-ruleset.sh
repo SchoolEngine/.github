@@ -58,6 +58,10 @@ if ! jq -e 'has("bypass_actors")' "$file" >/dev/null; then
   echo "Refused: $file has no bypass_actors key. Declare it, [] for none: without it the live bypass list would be kept." >&2
   exit 1
 fi
+if ! jq -e '(.bypass_actors | type) == "array"' "$file" >/dev/null; then
+  echo "Refused: $file has a bypass_actors that is not an array ($(jq -r '.bypass_actors | type' "$file")): use [] for none." >&2
+  exit 1
+fi
 
 # Bypass actors as the REST API defines them: Integration, RepositoryRole,
 # Team and User need a real id (a positive integer: a placeholder such as 0,
