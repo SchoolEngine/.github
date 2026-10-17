@@ -81,6 +81,9 @@ expect 0 "unknown name, --apply: POST" "POST orgs/SchoolEngine/rulesets" -- --ap
 
 echo "== Refusals"
 expect 1 "no bypass_actors key" - -- --apply "$(ruleset 'del(.bypass_actors) | .enforcement = "evaluate"' nobypasskey.json)"
+for value in '[1]' '["Integration"]' '[null]' '[[]]'; do
+  expect 1 "bypass_actors element not an object ($value)" - -- --apply --allow-bypass "$(ruleset ".bypass_actors = $value" notobject.json)"
+done
 for value in null '{}' '"none"'; do
   expect 1 "bypass_actors not an array ($value)" - -- --apply --allow-bypass "$(ruleset ".bypass_actors = $value" notarray.json)"
 done
