@@ -54,7 +54,7 @@ The cost: after every merge, the other open PRs of the repository are out of dat
    done
    ```
 
-3. **Activation PR** in this repository: adds `{"context": "Gate integrity", "integration_id": 15368}` to the required checks of `protect-develop.json`. After its merge, Céline (organisation owner) applies it; the dry-run must show only the added check:
+3. **Activation PR** in this repository: adds `{"context": "Gate integrity", "integration_id": 15368}` to the required checks of `protect-develop.json`. After its merge, an organisation owner applies it; the dry-run must show only the added check:
 
    ```bash
    scripts/apply-ruleset.sh rulesets/protect-develop.json
@@ -66,7 +66,7 @@ The cost: after every merge, the other open PRs of the repository are out of dat
 
 **New repositories** get `gate-integrity.yml` and the checker in their scaffold, before their first PR: under the ruleset, a repository without them cannot merge anything.
 
-**Break-glass** (the check is broken everywhere, for example a GitHub change to `pull_request_target`): Céline, as organisation owner, removes the check from the live ruleset through the API, then records it in a PR so the file matches again:
+**Break-glass** (the check is broken everywhere, for example a GitHub change to `pull_request_target`): an organisation owner removes the check from the live ruleset through the API, then records it in a PR so the file matches again:
 
 ```bash
 jq '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks)

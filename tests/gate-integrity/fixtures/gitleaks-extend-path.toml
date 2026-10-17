@@ -1,0 +1,3 @@
+[extend]
+useDefault = true
+path = "other-gitleaks.toml"

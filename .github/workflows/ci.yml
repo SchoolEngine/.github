@@ -278,7 +278,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
-          curl -fsSLO "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          curl -fsSLO --retry 3 --retry-all-errors "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
           echo "${YQ_SHA256}  yq_linux_amd64" | sha256sum --check --strict -
           install -m 0755 yq_linux_amd64 "$RUNNER_TEMP/bin/yq"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"

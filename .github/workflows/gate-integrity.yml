@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
-          curl -fsSLO "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          curl -fsSLO --retry 3 --retry-all-errors "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
           echo "${YQ_SHA256}  yq_linux_amd64" | sha256sum --check --strict -
           install -m 0755 yq_linux_amd64 "$RUNNER_TEMP/bin/yq"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
@@ -93,14 +93,18 @@ jobs:
             echo "MERGE_REF=$(git rev-parse refs/gate/merge)"
           } >> "$GITHUB_ENV"
 
-      # The PR itself (body, author), fetched live and saved as a file read by
-      # jq and Python in the checker: never interpolated into a script.
+      # The PR (body, author) and its commits (author, signature: the
+      # Dependabot exemption), fetched live and saved as files read by jq and
+      # Python in the checker: never interpolated into a script.
       - name: Fetch the PR metadata
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh api "repos/${REPO}/pulls/${PR_NUMBER}" > "$RUNNER_TEMP/pr.json"
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPO}/pulls/${PR_NUMBER}" > "$RUNNER_TEMP/pr.json"
+          gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/commits" | jq -s 'add // []' > "$RUNNER_TEMP/commits.json"
 
       - name: Check the gate against the base branch
         run: |
@@ -110,4 +114,5 @@ jobs:
             echo "::error::$checker is missing on the default branch: copy it from SchoolEngine/.github."
             exit 1
           fi
-          PR_JSON_FILE="$RUNNER_TEMP/pr.json" bash "$checker" ci "$BASE_REF" "$MERGE_REF"
+          PR_JSON_FILE="$RUNNER_TEMP/pr.json" PR_COMMITS_FILE="$RUNNER_TEMP/commits.json" \
+            bash "$checker" ci "$BASE_REF" "$MERGE_REF"

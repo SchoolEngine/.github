@@ -65,7 +65,7 @@ Rules, all learned on TheOpenMusicBox:
 
 ## Gate integrity
 
-`Quality Gate` lives in each PR's own `ci.yml`, and `protect-develop` requires no approving review: a PR can weaken the gate that judges it. `Gate integrity` is the detective control decided by Céline on 2026-10-16 (SchoolEngine/.github#22) instead of mandatory approvals. It becomes the **second required check** of `protect-develop` through a separate activation PR, once every repository has it ([`rulesets/README.md`](rulesets/README.md#enabling-the-gate-integrity-check)).
+`Quality Gate` lives in each PR's own `ci.yml`, and `protect-develop` requires no approving review: a PR can weaken the gate that judges it. `Gate integrity` is the detective control decided on 2026-10-16 (SchoolEngine/.github#22) instead of mandatory approvals. It becomes the **second required check** of `protect-develop` through a separate activation PR, once every repository has it ([`rulesets/README.md`](rulesets/README.md#enabling-the-gate-integrity-check)).
 
 ### How it runs, and why the PR it judges cannot rewrite it
 
@@ -80,23 +80,28 @@ Rules, all learned on TheOpenMusicBox:
 | Finding | With a `## Gate change` justification? |
 |---|---|
 | A common job missing from `ci.yml` (`pr-conventions`, `gitleaks`, `actionlint`, `lint-yaml-markdown`, `osv-scanner`), or `quality-gate` missing or renamed | refused |
-| The gate's `if:` not exactly `${{ !cancelled() }}`; a job not in its `needs:`; `continue-on-error` anywhere in `ci.yml` | refused |
-| In any workflow: more than one YAML document, duplicate keys in a mapping, a YAML anchor, alias or merge key; no top-level `permissions:`; a `shell` other than exactly `bash`, `sh`, `pwsh`, `powershell`, `python` or `cmd`; a job `name:` containing `${{`; a job named like a required check (`Quality Gate` outside `ci.yml`'s `quality-gate`, `Gate integrity` outside `gate-integrity.yml`'s `gate-integrity`) | refused |
-| In any workflow but `gate-integrity.yml`: a `pull_request_target` or `workflow_run` trigger, or a `write` permission (`write-all` included) | refused |
-| `ci.yml` `env:`: a `*_VERSION` that is not digits and dots, a version lower than on the base branch, a `*_SHA256` that is not 64 lowercase hex digits, a tool whose `*_VERSION` and `*_SHA256` do not change together | refused |
-| `gate-integrity.yml` or the checker removed; an ignore without a valid justification and expiry ([Ignore files](#ignore-files)) | refused |
+| The gate's `if:` not exactly `${{ !cancelled() }}`; a job not in its `needs:`; `continue-on-error` other than an explicit `false` anywhere in `ci.yml` | refused |
+| In any workflow: more than one YAML document, duplicate keys in a mapping, a YAML anchor, alias or merge key; a top-level key other than `name`, `run-name`, `on`, `permissions`, `env`, `defaults`, `concurrency`, `jobs` (keys are case-sensitive: `On:` is refused); no top-level `permissions:`; a `shell` other than exactly `bash`, `sh`, `pwsh`, `powershell`, `python` or `cmd`; a job named like a required check (`Quality Gate` outside `ci.yml`'s `quality-gate`, `Gate integrity` outside `gate-integrity.yml`'s `gate-integrity`) | refused |
+| In any workflow: a job `name:` with an expression other than plain matrix values (`Test (${{ matrix.os }})` is fine), with gate, quality or integrity in its literal text, or whose matrix values hold those words or are computed | refused |
+| In any workflow: a local `uses: ./...` outside `./.github/actions/` (steps) or `./.github/workflows/` (reusable workflows), or with `..` | refused |
+| In any workflow but `gate-integrity.yml`: a `pull_request_target` or `workflow_run` trigger; `write-all`; a `write` permission in a workflow triggered by `pull_request`, `pull_request_target`, `pull_request_review`, `pull_request_review_comment`, `issue_comment` or `workflow_run` | refused |
+| `ci.yml` `env:`: a `*_VERSION` that is not digits and dots, a version lower than on the base branch, a `*_SHA256` that is not 64 lowercase hex digits, a tool whose `*_VERSION` and `*_SHA256` do not change together, a `*_SHA256` removed while its `*_VERSION` stays | refused |
+| `gate-integrity.yml` or the checker removed; an ignore without a valid justification and expiry ([Ignore files](#ignore-files)); `.gitleaks.toml` with `[extend] path` or `url`; a TOML ignore file with keys that differ only by case, or that is not valid TOML | refused |
 | A job of the base branch removed from `ci.yml`; the definition of a common job or of the gate changed (the gate's `needs:` aside, so adding a job passes) | gate change |
-| `ci.yml` changed outside `jobs`: `name`, `on`, `permissions`, `defaults`, `concurrency`, or `env` except the `*_VERSION` / `*_SHA256` pins (a new `BASH_ENV` or a lowered `COVERAGE_MIN` is a gate change) | gate change |
-| Any other workflow added or changed, `gate-integrity.yml` included; the checker changed; any file under `.github/actions/` added, changed or removed | gate change |
-| `.gitleaks.toml` without `[extend] useDefault = true`, or with `disabledRules` | gate change |
+| `ci.yml` changed outside `jobs`: `name`, `on`, `permissions`, `defaults`, `concurrency`, or `env` except the `*_VERSION` / `*_SHA256` pins (a new `BASH_ENV` or a lowered `COVERAGE_MIN` is a gate change); any `*_SHA256` value changed (a different tool binary) | gate change |
+| Any other workflow added or changed, `gate-integrity.yml` included; a `write` permission in a workflow on other triggers (a release on `push`, CodeQL `security-events`); the checker changed; any file under `.github/actions/` added, changed or removed | gate change |
+| The configuration of the common jobs or of Dependabot added, changed or removed: `.github/actionlint.yaml`, `.yamllint*`, `.markdownlint*`, `.github/dependabot.yml` | gate change |
+| `.gitleaks.toml` without `[extend] useDefault = true`, with `disabledRules`, or with a `[[rules]]` entry added or changed (a rule with a default rule's id replaces it) | gate change |
 
-**Action SHAs.** A changed SHA in `uses:` is ignored only in a PR opened by `dependabot[bot]`, and only when the action itself (`owner/repo`) is unchanged; in `gate-integrity.yml` it is never ignored. A person changing a SHA, or Dependabot bumping an action of `gate-integrity.yml`, makes a gate change: add the `## Gate change` section to the PR body (editing the body of a Dependabot PR is fine; pushing to its branch is not).
+TOML keys are compared lowercased, as gitleaks and osv-scanner read them: `[AllowList]` is checked like `[allowlist]`, `DisabledRules` like `disabledRules`.
 
-Changes to stack jobs (adding a job, a step, a stack job's commands) and matrices are not gate changes: matrix jobs get the matrix values appended in parentheses, so they never carry a required check's exact name.
+**Action SHAs.** A changed SHA in `uses:` is ignored only in a PR opened by `dependabot[bot]` whose every commit is authored by `dependabot[bot]` with a verified signature (anyone with write access can push to a Dependabot branch), and only when the action itself (`owner/repo`) is unchanged; in `gate-integrity.yml` it is never ignored. Otherwise a changed SHA makes a gate change: add the `## Gate change` section to the PR body (editing the body of a Dependabot PR is fine; pushing to its branch is not).
+
+Changes to stack jobs (adding a job, a step, a stack job's commands) are not gate changes. Matrix jobs without a `name:` get the matrix values appended in parentheses, so they never carry a required check's exact name.
 
 ### Approving a gate change
 
-The checker only asks for a reason: the PR body has a `## Gate change` section whose text, **HTML comments removed entirely**, has at least 20 letters or digits. The approval itself is the **double agent review (code and security) recorded on the PR**, then Céline's explicit go to merge, as for every PR. There is no label and no human approver mechanism. The section is re-read when the body is edited: no re-run by hand is needed.
+The checker only asks for a reason: the PR body has a `## Gate change` section whose text, **HTML comments removed entirely**, has at least 20 letters or digits. The approval itself is the **double agent review (code and security) recorded on the PR**, then the explicit go of an organisation owner to merge, as for every PR. There is no label and no human approver mechanism. The section is re-read when the body is edited: no re-run by hand is needed.
 
 ### Residual risks
 
@@ -105,6 +110,7 @@ It is a detective control with a narrow preventive core, not a guarantee:
 - **Owners are trusted.** The PRs are opened by an organisation owner account and `protect-develop` requires 0 approvals: an owner can still change the ruleset or merge after a review that missed something. The control makes a weakening visible and attributable.
 - **A new or changed workflow runs before review.** A workflow added on `pull_request` runs on the PR's own commits as soon as they are pushed, before anyone reads it (read-only token, no secret, but it can report checks). `Gate integrity` flags it; reviewers read every workflow change before anything else.
 - **Required checks are matched by name.** Other workflows of a PR can report checks; the checker refuses the reserved names, and reviewers confirm that `Gate integrity` and `Quality Gate` each appear once on the head commit.
+- **Dependabot rewrites PR bodies.** When Dependabot rebases or recreates a PR, it can rewrite the body and drop a `## Gate change` section added by hand: the check turns red again until the section is restored.
 - **After merge.** An approved change to `gate-integrity.yml` or the checker judges every later PR: the review of such a PR is the real control.
 - **Not covered:** stack jobs made weaker while still succeeding (a test command that tests less), and files the checker does not read (a lint configuration, a `package.json` script). Those are for review.
 
@@ -118,7 +124,7 @@ To change the checker: change it and its tests here (`tests/gate-integrity/run.s
 
 Every ignore carries a justification of at least 20 letters or digits and an expiry date that is not past and at most **180 days** ahead (ADR-014). Renewing means a new justification and a new date, in a reviewed PR.
 
-- `osv-scanner.toml` (any directory: osv-scanner reads the one next to each lockfile): each `[[IgnoredVulns]]` has `reason` and `ignoreUntil`; each `[[PackageOverrides]]` that ignores has `reason` and `effectiveUntil`. osv-scanner itself stops ignoring after the date; the check also refuses a past date.
+- `osv-scanner.toml` (any directory but `.git`, `node_modules` and `.dart_tool`: osv-scanner reads the one next to each lockfile): each `[[IgnoredVulns]]` has `reason` and `ignoreUntil`; each `[[PackageOverrides]]` that ignores has `reason` and `effectiveUntil`. osv-scanner itself stops ignoring after the date; the check also refuses a past date.
 - `.gitleaksignore`: each fingerprint is preceded by a comment `# <justification> expires: YYYY-MM-DD`. gitleaks has no expiry of its own, so the check fails once the date is past: remove the entry or renew it.
 - `.gitleaks.toml`: extends the default rules (`[extend] useDefault = true`); each allowlist (top level or in a rule) has a `description` ending with `expires: YYYY-MM-DD`, enforced the same way.
 
@@ -152,7 +158,7 @@ In a pnpm repository, `.prettierignore` lists `*.md`, `*.yml` and `*.yaml` (plus
 
 ## Bumping a tool version
 
-Versions downloaded in `run:` steps are not seen by Dependabot. To bump one: change the version **and its `*_SHA256`** in the `env:` block of the template here, then in each repository's `ci.yml`. Take the sha256 from the asset digest GitHub shows on the release page (or `gh release view`), cross-checked with a local `sha256sum` of the downloaded asset and, when the project publishes one, its checksum file (the Flutter value comes from the Flutter release index). A version bump with its sha256 is not a gate change; `Gate integrity` refuses a malformed version, a downgrade, and a version or sha256 changed alone. Actions in `uses:` are bumped by Dependabot (`github-actions` ecosystem), keeping the SHA and the version comment in sync.
+Versions downloaded in `run:` steps are not seen by Dependabot. To bump one: change the version **and its `*_SHA256`** in the `env:` block of the template here, then in each repository's `ci.yml`. Take the sha256 from the asset digest GitHub shows on the release page (or `gh release view`), cross-checked with a local `sha256sum` of the downloaded asset and, when the project publishes one, its checksum file (the Flutter value comes from the Flutter release index). A version bump with its sha256 is a gate change (a different binary): the PR body gets a `## Gate change` section naming the release and where the sha256 was taken from. `Gate integrity` refuses a malformed version, a downgrade, a version or sha256 changed alone, and a sha256 removed while its version stays. Actions in `uses:` are bumped by Dependabot (`github-actions` ecosystem), keeping the SHA and the version comment in sync.
 
 ## Runners: GitHub-hosted now, self-hosted later
 

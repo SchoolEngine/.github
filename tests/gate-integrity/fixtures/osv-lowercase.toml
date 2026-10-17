@@ -1,0 +1,3 @@
+[[ignoredvulns]]
+id = "GHSA-aaaa-bbbb-cccc"
+reason = "No fixed version yet; the vulnerable function is not called."

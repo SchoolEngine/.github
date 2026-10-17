@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+regex = '''xyz'''

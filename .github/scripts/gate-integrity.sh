@@ -16,8 +16,10 @@
 # Environment:
 #   PR_JSON_FILE           the PR as returned by GET /repos/{repo}/pulls/{n}
 #                          (body: the `## Gate change` section; user: the
-#                          author). Without it no gate change is accepted and
-#                          action SHAs are compared strictly.
+#                          author). Without it no gate change is accepted.
+#   PR_COMMITS_FILE        its commits (GET /repos/{repo}/pulls/{n}/commits,
+#                          all pages). Action SHAs are ignored only when the
+#                          author and every commit are Dependabot's, signed.
 #   GATE_INTEGRITY_TODAY   YYYY-MM-DD, tests only
 # Requires bash 4+, git, yq (v4), jq and python3 (tomllib, 3.11 or later).
 #
@@ -38,6 +40,14 @@ readonly CI_FILE=".github/workflows/ci.yml"
 readonly INTEGRITY_FILE=".github/workflows/gate-integrity.yml"
 readonly INTEGRITY_SCRIPT=".github/scripts/gate-integrity.sh"
 readonly ACTIONS_DIR=".github/actions"
+# Configuration of the common jobs and of Dependabot: a change to any of them
+# is a gate change.
+readonly WATCHED_FILES=(.github/actionlint.yaml .github/actionlint.yml .github/dependabot.yml .github/dependabot.yaml
+  .yamllint .yamllint.yml .yamllint.yaml .markdownlint-cli2.yaml .markdownlint-cli2.jsonc .markdownlint-cli2.cjs
+  .markdownlint.yaml .markdownlint.yml .markdownlint.json .markdownlint.jsonc)
+readonly WORKFLOW_KEYS='["name", "run-name", "on", "permissions", "env", "defaults", "concurrency", "jobs"]'
+# Triggers whose runs a PR author can cause: no write permission there.
+readonly PR_TRIGGERS='["pull_request", "pull_request_target", "pull_request_review", "pull_request_review_comment", "issue_comment", "workflow_run"]'
 readonly DEPENDABOT="dependabot[bot]"
 readonly MAX_IGNORE_DAYS=180
 readonly MIN_JUSTIFICATION=20
@@ -48,8 +58,15 @@ gate_changes=0
 today="${GATE_INTEGRITY_TODAY:-$(date -u +%F)}"
 horizon=$(python3 -I -c 'import datetime, sys
 print(datetime.date.fromisoformat(sys.argv[1]) + datetime.timedelta(days=int(sys.argv[2])))' "$today" "$MAX_IGNORE_DAYS")
-author=""
-[[ -z "${PR_JSON_FILE:-}" ]] || author=$(jq -r '.user.login // ""' "$PR_JSON_FILE")
+# A Dependabot PR: opened by Dependabot, and every commit authored by it with
+# a verified signature (anyone with write access can push to its branch).
+dependabot=false
+if [[ -n "${PR_JSON_FILE:-}" && -n "${PR_COMMITS_FILE:-}" ]] \
+    && [[ "$(jq -r '.user.login // ""' "$PR_JSON_FILE")" == "$DEPENDABOT" ]] \
+    && jq -e --arg bot "$DEPENDABOT" 'length > 0 and all(.[]; .author.login == $bot and .commit.verification.verified == true)' \
+      "$PR_COMMITS_FILE" >/dev/null; then
+  dependabot=true
+fi
 
 # --- Output -----------------------------------------------------------------
 
@@ -98,18 +115,39 @@ show_diff() {
 # The first document only: a second one is refused by check_workflow_rules.
 yaml_json() { yq -o json 'select(document_index == 0)' "$1"; }
 
+# TOML as JSON, every key lowercased: gitleaks and osv-scanner read keys
+# case-insensitively (`[AllowList]` is `[allowlist]`), so the checker must too.
+# Keys that differ only by case are refused (exit 1, message on stdout).
 toml_json() {
   python3 -I -c 'import json, sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    print(json.dumps(tomllib.load(f), default=str))' "$1"
+def lower(value, where):
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            low = key.lower()
+            if low in out:
+                print(f"keys that differ only by case: {where}{low}")
+                sys.exit(1)
+            out[low] = lower(item, f"{where}{low}.")
+        return out
+    if isinstance(value, list):
+        return [lower(item, where) for item in value]
+    return value
+try:
+    with open(sys.argv[1], "rb") as f:
+        data = tomllib.load(f)
+except tomllib.TOMLDecodeError as error:
+    print(f"not valid TOML: {error}")
+    sys.exit(1)
+print(json.dumps(lower(data, ""), default=str))' "$1"
 }
 
 # A workflow (JSON) as compared with the base branch. Action SHAs are ignored
-# only in a Dependabot PR, and only when the action itself is unchanged
-# (`owner/repo@<sha>` keeps the owner and the repository).
+# only in a Dependabot PR (see `dependabot`), and only when the action itself
+# is unchanged (`owner/repo@<sha>` keeps the owner and the repository).
 normalized() {
-  jq -S --arg author "$author" --arg bot "$DEPENDABOT" '
-    if $author == $bot then
+  jq -S --argjson dependabot "$dependabot" '
+    if $dependabot then
       walk(if type == "object" and (.uses | type) == "string"
            then .uses |= sub("@[0-9a-f]{40}$"; "@<sha>") else . end)
     else . end' <<<"$1"
@@ -144,8 +182,9 @@ gate_job() {
 
 has_job() { jq -e --arg job "$2" '.jobs | has($job)' <<<"$1" >/dev/null; }
 
-# `*_VERSION` and `*_SHA256` of ci.yml: well formed, never downgraded, and a
-# tool's version and sha256 change together. One JSON string per finding.
+# `*_VERSION` and `*_SHA256` of ci.yml: well formed, never downgraded, a
+# tool's version and sha256 change together, a sha256 is never dropped while
+# its version stays. One JSON string per finding.
 check_tool_pins() {
   local base=$1 head=$2 finding
   while IFS= read -r finding; do
@@ -165,8 +204,16 @@ check_tool_pins() {
         ($he | keys[] | select(test("_VERSION$")) | sub("_VERSION$"; "") as $t
          | select(($he["\($t)_SHA256"] != null) and ($be["\($t)_VERSION"] != null) and ($be["\($t)_SHA256"] != null))
          | select(($he["\($t)_VERSION"] != $be["\($t)_VERSION"]) != ($he["\($t)_SHA256"] != $be["\($t)_SHA256"]))
-         | "\($t)_VERSION and \($t)_SHA256 must change together") )
+         | "\($t)_VERSION and \($t)_SHA256 must change together"),
+        ($be | keys[] | select(test("_SHA256$")) | . as $k | sub("_SHA256$"; "") as $t
+         | select($he[$k] == null and $he["\($t)_VERSION"] != null)
+         | "\($k) removed while \($t)_VERSION stays (the download would go unverified)") )
     | tojson' <<<"$head")
+  # A new binary is reviewed as such: any sha256 change is a gate change.
+  while IFS= read -r finding; do
+    gate_change "$CI_FILE env: $finding changed (a different tool binary)."
+  done < <(jq -r --argjson b "$base" '($b.env // {}) as $be | (.env // {}) | to_entries[]
+    | select((.key | test("_SHA256$")) and $be[.key] != null and ($be[.key] | tostring) != (.value | tostring)) | .key' <<<"$head")
 }
 
 check_ci() {
@@ -192,7 +239,8 @@ check_ci() {
     [[ -z "$missing" ]] || hard_error "Not in the 'needs:' of '$GATE_JOB', so blocking nothing: $missing."
   fi
 
-  coe=$(jq -r '[.jobs | paths | select(.[-1] == "continue-on-error") | map(tostring) | join(".")] | join(", ")' <<<"$head")
+  coe=$(jq -r '.jobs as $jobs | [$jobs | paths | select(.[-1] == "continue-on-error")
+    | select(. as $p | $jobs | getpath($p) != false) | map(tostring) | join(".")] | join(", ")' <<<"$head")
   [[ -z "$coe" ]] || hard_error "continue-on-error is forbidden in $CI_FILE (a failing job would pass the gate): $coe."
 
   check_tool_pins "$base" "$head"
@@ -248,13 +296,33 @@ check_workflow_rules() {
   jq -e 'type == "object" and has("permissions")' <<<"$json" >/dev/null \
     || hard_error "$path: a top-level 'permissions:' is required (least privilege)."
 
+  found=$(jq -r --argjson known "$WORKFLOW_KEYS" '[keys[] | select(. as $k | $known | index($k) | not)] | map(tojson) | join(", ")' <<<"$json")
+  [[ -z "$found" ]] || hard_error "$path: unknown top-level key (keys are case-sensitive: 'on', not 'On'): $found."
+
+  found=$(jq -r '
+    [(.jobs // {} | .[] | .uses // empty | select(startswith("./"))
+        | select((test("^[.]/[.]github/workflows/[^/]+[.]ya?ml$") | not) or contains(".."))),
+       (.jobs // {} | .[] | .steps // [] | .[] | .uses // empty | select(startswith("./"))
+        | select((startswith("./.github/actions/") | not) or contains("..")))]
+    | unique | map(tojson) | join(", ")' <<<"$json")
+  [[ -z "$found" ]] || hard_error "$path: local action or workflow outside .github/actions/ or .github/workflows/ (not checked): $found."
+
   found=$(jq -r '
     [paths(type == "string") as $p | select($p[-1] == "shell") | getpath($p)
      | select(IN("bash", "sh", "pwsh", "powershell", "python", "cmd") | not)] | unique | map(tojson) | join(", ")' <<<"$json")
   [[ -z "$found" ]] || hard_error "$path: custom shell forbidden (a shell template can turn every step into a no-op): $found."
 
-  found=$(jq -r '[.jobs // {} | to_entries[] | select((.value.name // "") | tostring | contains("${{")) | .key] | join(", ")' <<<"$json")
-  [[ -z "$found" ]] || hard_error "$path: a job name built from an expression could take a required check's name: $found."
+  # A matrix name such as `Test (${{ matrix.os }})` is fine. Refused: any
+  # other expression in a job name, literal text with gate, quality or
+  # integrity next to an expression, and a matrix whose values could carry
+  # those words or are computed: each could build a required check's name.
+  found=$(jq -r '[.jobs // {} | to_entries[] | . as $job | (.value.name // "" | tostring) as $name
+    | select($name | contains("${{"))
+    | select(([$name | scan("[$][{][{](.*?)[}][}]") | .[0]] | any(test("^\\s*matrix[.][A-Za-z0-9_-]+\\s*$") | not))
+        or ($name | gsub("[$][{][{].*?[}][}]"; "") | ascii_downcase | test("gate|quality|integrity"))
+        or ($job.value.strategy // {} | tojson | ascii_downcase | test("gate|quality|integrity|[$][{][{]")))
+    | .key] | join(", ")' <<<"$json")
+  [[ -z "$found" ]] || hard_error "$path: a job name built from an expression other than a plain matrix value could take a required check's name: $found."
 
   found=$(jq -r --arg ci "$CI_FILE" --arg integrity "$INTEGRITY_FILE" --arg path "$path" '
     [.jobs // {} | to_entries[]
@@ -272,12 +340,20 @@ check_workflow_rules() {
     | map(select(. == "pull_request_target" or . == "workflow_run")) | join(", ")' <<<"$json")
   [[ -z "$found" ]] || hard_error "$path: trigger forbidden outside $INTEGRITY_FILE (it runs with the base repository's trust): $found."
 
-  found=$(jq -r '
+  local triggers writes
+  triggers=$(jq -c '(.on // {}) | if type == "string" then [.] elif type == "array" then . else keys end' <<<"$json")
+  writes=$(jq -r '
     [(.permissions // empty), (.jobs // {} | .[] | .permissions // empty)]
     | map(if type == "string" then select(. == "write-all")
           else to_entries[] | select(.value == "write") | .key end)
     | unique | join(", ")' <<<"$json")
-  [[ -z "$found" ]] || hard_error "$path: write permission forbidden (a job could set statuses, labels or code): $found."
+  [[ -n "$writes" ]] || return 0
+  if [[ "$writes" == *write-all* ]] \
+      || jq -e --argjson pr "$PR_TRIGGERS" 'any(.[]; . as $t | $pr | index($t))' <<<"$triggers" >/dev/null; then
+    hard_error "$path: write permission forbidden with write-all or on a trigger a PR author can cause ($(jq -r 'join(", ")' <<<"$triggers")): $writes."
+  else
+    gate_change "$path grants write permissions ($writes) on $(jq -r 'join(", ")' <<<"$triggers")."
+  fi
 }
 
 # How a workflow is compared with the base branch: gate-integrity.yml always
@@ -330,6 +406,17 @@ check_workflows() {
       gate_change "local action file $path changed (diff above)."
     fi
   done < <({ list_files "$base_dir" "$ACTIONS_DIR"; list_files "$head_dir" "$ACTIONS_DIR"; } | sort -u)
+
+  for path in "${WATCHED_FILES[@]}"; do
+    if [[ -f "$base_dir/$path" && ! -f "$head_dir/$path" ]]; then
+      gate_change "$path was removed (configuration of the common jobs or of Dependabot)."
+    elif [[ ! -f "$base_dir/$path" && -f "$head_dir/$path" ]]; then
+      gate_change "$path was added (configuration of the common jobs or of Dependabot)."
+      untrusted "$(cat "$head_dir/$path")"
+    elif [[ -f "$head_dir/$path" ]] && ! show_diff "base: $path" "pr: $path" "$base_dir/$path" "$head_dir/$path"; then
+      gate_change "$path changed (configuration of the common jobs or of Dependabot; diff above)."
+    fi
+  done
 }
 
 # --- The ignore files (ADR-014) ---------------------------------------------
@@ -381,12 +468,26 @@ check_gitleaksignore() {
 }
 
 check_gitleaks_toml() {
-  local file=$1 json description
-  json=$(toml_json "$file")
-  jq -e '.extend.useDefault == true' <<<"$json" >/dev/null \
+  local base_file=$1 file=$2 json base='{}' description
+  if ! json=$(toml_json "$file"); then
+    hard_error ".gitleaks.toml: $json."
+    return 0
+  fi
+  if [[ -f "$base_file" ]]; then
+    base=$(toml_json "$base_file") || base='{}'
+  fi
+  jq -e '.extend | has("path") or has("url")' <<<"$json" >/dev/null 2>&1 \
+    && hard_error ".gitleaks.toml: [extend] path or url is forbidden (the extended file is not checked)."
+  jq -e '.extend.usedefault == true' <<<"$json" >/dev/null \
     || gate_change ".gitleaks.toml does not extend the default rules ([extend] useDefault = true)."
-  jq -e '(.extend.disabledRules // []) | length == 0' <<<"$json" >/dev/null \
-    || gate_change ".gitleaks.toml disables default rules: $(jq -c '.extend.disabledRules' <<<"$json")."
+  jq -e '(.extend.disabledrules // []) | length == 0' <<<"$json" >/dev/null \
+    || gate_change ".gitleaks.toml disables default rules: $(jq -c '.extend.disabledrules' <<<"$json")."
+  # A rule with the id of a default rule replaces it: any rule added or
+  # changed is reviewed as a gate change.
+  if ! show_diff "base: .gitleaks.toml rules" "pr: .gitleaks.toml rules" \
+      <(jq -S '.rules // []' <<<"$base") <(jq -S '.rules // []' <<<"$json"); then
+    gate_change ".gitleaks.toml rules added or changed (a rule can replace a default one; diff above)."
+  fi
   # One JSON string per line, decoded after the read: a description may hold
   # newlines.
   while IFS= read -r description; do
@@ -400,7 +501,10 @@ check_gitleaks_toml() {
 
 check_osv_toml() {
   local path=$1 file=$2 json entry what reason until problem
-  json=$(toml_json "$file")
+  if ! json=$(toml_json "$file"); then
+    hard_error "$path: $json."
+    return 0
+  fi
   while IFS= read -r entry; do
     what=$(jq -r '.what' <<<"$entry")
     reason=$(jq -r '.reason' <<<"$entry")
@@ -411,17 +515,18 @@ check_osv_toml() {
     [[ -z "$problem" ]] || hard_error "$path: $what: $problem ('ignoreUntil' or 'effectiveUntil')."
   done < <(jq -c '
     def day: (. // "") | tostring | .[0:10];
-    [ (.IgnoredVulns // [])[]
-      | {what: "IgnoredVulns \(.id // "<no id>")", reason: (.reason // ""), until: (.ignoreUntil | day)} ]
-    + [ (.PackageOverrides // [])[]
+    [ (.ignoredvulns // [])[]
+      | {what: "IgnoredVulns \(.id // "<no id>")", reason: (.reason // ""), until: (.ignoreuntil | day)} ]
+    + [ (.packageoverrides // [])[]
       | select(.ignore == true or .vulnerability.ignore == true or .license.ignore == true)
-      | {what: "PackageOverrides \(.name // "<no name>")", reason: (.reason // ""), until: (.effectiveUntil | day)} ]
+      | {what: "PackageOverrides \(.name // "<no name>")", reason: (.reason // ""), until: (.effectiveuntil | day)} ]
     | .[]' <<<"$json")
 }
 
-# Directories never scanned for osv-scanner.toml: dependencies and build
-# output, not the repository's own configuration.
-readonly SKIPPED_DIR_RE='(^|/)(\.git|node_modules|\.dart_tool|build|vendor)/'
+# Directories never scanned for osv-scanner.toml: installed dependencies, not
+# the repository's own configuration (they are never committed anyway). A
+# `build/` or `vendor/` folder of the repository is checked.
+readonly SKIPPED_DIR_RE='(^|/)(\.git|node_modules|\.dart_tool)/'
 
 list_ignores() {
   (cd "$1" && find . -type f \( -name osv-scanner.toml -o -path ./.gitleaks.toml -o -path ./.gitleaksignore \) -print \
@@ -442,7 +547,7 @@ check_ignores() {
     fi
     case "$path" in
       .gitleaksignore) check_gitleaksignore "$head_dir/$path" ;;
-      .gitleaks.toml) check_gitleaks_toml "$head_dir/$path" ;;
+      .gitleaks.toml) check_gitleaks_toml "$base_dir/$path" "$head_dir/$path" ;;
       *) check_osv_toml "$path" "$head_dir/$path" ;;
     esac
   done < <(list_ignores "$head_dir")
@@ -460,6 +565,7 @@ extract() {
     [[ "$meta" == *" blob "* ]] || continue
     case "$path" in
       .github/workflows/*.yml | .github/workflows/*.yaml | "$INTEGRITY_SCRIPT" | "$ACTIONS_DIR"/* | .gitleaks.toml | .gitleaksignore) ;;
+      .github/actionlint.y*ml | .github/dependabot.y*ml | .yamllint* | .markdownlint*) ;;
       osv-scanner.toml | */osv-scanner.toml) [[ ! "$path" =~ $SKIPPED_DIR_RE ]] || continue ;;
       *) continue ;;
     esac
@@ -498,7 +604,7 @@ verdict() {
     if [[ "$length" -ge "$MIN_JUSTIFICATION" ]]; then
       echo "::warning::$gate_changes gate change(s) justified in the '## Gate change' section: the double agent review (code and security) recorded on the PR is the approval."
       [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] \
-        || echo "**Gate change**: $gate_changes change(s) to the Quality Gate, justified in the PR body. The double agent review (code and security) recorded on the PR is the approval; Céline's explicit go is required to merge." >>"$GITHUB_STEP_SUMMARY"
+        || echo "**Gate change**: $gate_changes change(s) to the Quality Gate, justified in the PR body. The double agent review (code and security) recorded on the PR is the approval; the explicit go of an organisation owner is required to merge." >>"$GITHUB_STEP_SUMMARY"
     else
       echo "::error::$gate_changes gate change(s) without a justification: add a '## Gate change' section of at least $MIN_JUSTIFICATION letters or digits, HTML comments excluded (CI.md, Gate integrity)."
       hard=$((hard + 1))

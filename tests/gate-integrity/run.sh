@@ -5,6 +5,7 @@
 # fixtures/; PR metadata is generated. Run by the `scripts` job of ci.yml.
 #
 # Usage: tests/gate-integrity/run.sh   (needs bash 4+, yq, jq, python3, git)
+# shellcheck disable=SC2016  # literal GitHub expressions in yq programs throughout
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
@@ -118,6 +119,18 @@ justification="The node job moves to a separate workflow, reviewed in this PR."
 pr_meta feat Lynerah "Closes #1"
 pr_meta justified Lynerah $'Closes #1\n\n## Gate change\n\n'"$justification"$'\n\n## Review first\n'
 pr_meta dependabot "dependabot[bot]" "Bumps actions/checkout."
+# commits <name> <author:verified>...
+commits() {
+  local name=$1 list='[]' spec
+  shift
+  for spec in "$@"; do
+    list=$(jq --arg a "${spec%%:*}" --argjson v "${spec##*:}" '. + [{author: {login: $a}, commit: {verification: {verified: $v}}}]' <<<"$list")
+  done
+  echo "$list" >"$work/$name.commits.json"
+}
+commits signed "dependabot[bot]:true" "dependabot[bot]:true"
+commits unsigned "dependabot[bot]:true" "dependabot[bot]:false"
+commits mixed "dependabot[bot]:true" "Lynerah:true"
 pr_meta no-section Lynerah $'Closes #1\n\n## Review first\n\n'"$justification"
 pr_meta empty-section Lynerah $'Closes #1\n\n## Gate change\n\n## Review first\n'
 pr_meta comment-only Lynerah $'Closes #1\n\n## Gate change\n\n<!-- '"$justification"$' -->\n\n## Review first\n'
@@ -134,7 +147,7 @@ as_pr() {
 }
 feat_pr() { as_pr feat "$@"; }
 justified_pr() { as_pr justified "$@"; }
-dependabot_pr() { as_pr dependabot "$@"; }
+dependabot_pr() { PR_COMMITS_FILE="$work/signed.commits.json" as_pr dependabot "$@"; }
 
 sha_a="0000000000000000000000000000000000000000"
 sha64="1111111111111111111111111111111111111111111111111111111111111111"
@@ -151,8 +164,11 @@ expect 0 "a step added to a stack job" feat_pr check \
   "$(head_of '.jobs.node.steps += [{"name": "Extra", "run": "true"}]')"
 expect 0 "a matrix stack job (names get a suffix, never a check name)" feat_pr check \
   "$(head_of '.jobs.node.strategy.matrix.os = ["a", "b"]')"
-expect 0 "a tool version bumped with its sha256" feat_pr check \
-  "$(head_of ".env.GITLEAKS_VERSION = \"8.31.0\" | .env.GITLEAKS_SHA256 = \"$sha64\"")"
+expect 0 "an explicit continue-on-error: false" feat_pr check "$(head_of '.jobs.node.continue-on-error = false')"
+expect 0 "a matrix job name built from a matrix value" feat_pr check \
+  "$(head_of '.jobs.node.name = "Test (${{ matrix.os }})" | .jobs.node.strategy.matrix.os = ["ubuntu", "macos"]')"
+expect 0 "a local action under .github/actions/" feat_pr check \
+  "$(head_of '.jobs.node.steps += [{"uses": "./.github/actions/setup"}]')"
 expect 0 "a version without sha256 bumped" feat_pr check "$(head_of '.env.YAMLLINT_VERSION = "1.39.0"')"
 expect 0 "Dependabot: an action SHA bumped in ci.yml" dependabot_pr check \
   "$(head_of "(.jobs.gitleaks.steps[0].uses) = \"actions/checkout@$sha_a\"")"
@@ -182,11 +198,30 @@ expect 1 "write permission on a job of ci.yml" justified_pr check \
   "$(head_of '.jobs.node.permissions.statuses = "write"')"
 expect 1 "write-all in ci.yml" justified_pr check "$(head_of '.permissions = "write-all"')"
 expect 1 "no top-level permissions in ci.yml" justified_pr check "$(head_of 'del(.permissions)')"
+expect 1 "write-all on a push workflow" justified_pr check "$(head_with .github/workflows/x.yml <<'EOF'
+on: push
+permissions: write-all
+jobs:
+  x: {runs-on: ubuntu-latest, steps: [{run: "true"}]}
+EOF
+)"
 expect 1 "a job named Gate integrity in ci.yml" justified_pr check \
   "$(head_of '.jobs.node.name = "Gate integrity"')"
 # shellcheck disable=SC2016  # literal GitHub expressions
-expect 1 "a job name built from an expression" justified_pr check \
+expect 1 "a job name built from a format() expression" justified_pr check \
   "$(head_of '.jobs.node.name = "${{ format(''{0} {1}'', ''Quality'', ''Gate'') }}"')"
+expect 1 "a job name from a matrix value holding Quality Gate" justified_pr check \
+  "$(head_of '.jobs.node.name = "${{ matrix.x }}" | .jobs.node.strategy.matrix.x = ["Quality Gate"]')"
+expect 1 "a job name from a computed matrix" justified_pr check \
+  "$(head_of '.jobs.node.name = "${{ matrix.x }}" | .jobs.node.strategy.matrix = "${{ fromJSON(needs.a.outputs.m) }}"')"
+expect 1 "literal Gate next to a matrix value" justified_pr check \
+  "$(head_of '.jobs.node.name = "Gate ${{ matrix.x }}" | .jobs.node.strategy.matrix.x = ["a"]')"
+expect 1 "a local action outside .github/actions/" justified_pr check \
+  "$(head_of '.jobs.node.steps += [{"uses": "./scripts/action"}]')"
+expect 1 "a local action escaping .github/actions/" justified_pr check \
+  "$(head_of '.jobs.node.steps += [{"uses": "./.github/actions/../../x"}]')"
+expect 1 "a non-canonical top-level key (On)" justified_pr check "$(head_of '.On = .on | del(.on)')"
+expect 1 "a sha256 removed while its version stays" justified_pr check "$(head_of 'del(.env.GITLEAKS_SHA256)')"
 expect 1 "a YAML anchor in ci.yml" justified_pr check "$(head_append 'x: &anchor [1]')"
 head=$(head_of '.jobs.quality-gate.needs += ["extra"]')
 printf '  extra:\n    <<: {timeout-minutes: 1}\n    runs-on: ubuntu-latest\n    steps: [{run: "true"}]\n' >>"$head/.github/workflows/ci.yml"
@@ -235,6 +270,12 @@ permissions: {statuses: write}
 jobs:
   x: {runs-on: ubuntu-latest, steps: [{run: "true"}]}
 EOF
+new_workflow_case "with write on issue_comment" <<'EOF'
+on: issue_comment
+permissions: {pull-requests: write}
+jobs:
+  x: {runs-on: ubuntu-latest, steps: [{run: "true"}]}
+EOF
 new_workflow_case "without top-level permissions" <<'EOF'
 on: pull_request
 jobs:
@@ -258,6 +299,18 @@ gate_change_case "gitleaks step rewritten" "$(head_of '.jobs.gitleaks.steps[2].r
 gate_change_case "gate script rewritten" "$(head_of '.jobs.quality-gate.steps[0].run = "exit 0"')"
 gate_change_case "an action SHA changed by a person" \
   "$(head_of "(.jobs.gitleaks.steps[0].uses) = \"actions/checkout@$sha_a\"")"
+gate_change_case "a tool version bumped with its sha256" \
+  "$(head_of ".env.GITLEAKS_VERSION = \"8.31.0\" | .env.GITLEAKS_SHA256 = \"$sha64\"")"
+gate_change_case "a release workflow with contents: write on push" "$(head_with .github/workflows/release.yml <<'EOF'
+on: {push: {tags: ['v*']}}
+permissions: {contents: write}
+jobs:
+  x: {runs-on: ubuntu-latest, steps: [{run: "true"}]}
+EOF
+)"
+for f in .yamllint.yml .markdownlint-cli2.yaml .github/actionlint.yaml .github/dependabot.yml; do
+  gate_change_case "$f added" "$(head_with "$f" <<<'x: 1')"
+done
 gate_change_case "trigger changed (on)" "$(head_of '.on.pull_request.types = ["opened"]')"
 gate_change_case "workflow permissions changed" "$(head_of '.permissions = {}')"
 gate_change_case "defaults added" "$(head_of '.defaults.run.working-directory = "docs"')"
@@ -282,6 +335,12 @@ gate_change_case "gate-integrity.yml changed" "$head"
 head=$(head_of '.')
 yq -i "(.jobs.gate-integrity.steps[0].uses) = \"actions/checkout@$sha_a\"" "$head/.github/workflows/gate-integrity.yml"
 expect 1 "Dependabot: an action SHA bumped in gate-integrity.yml (never normalized)" dependabot_pr check "$head"
+sha_bump=$(head_of "(.jobs.gitleaks.steps[0].uses) = \"actions/checkout@$sha_a\"")
+expect 1 "Dependabot PR with an unsigned commit: SHA bump not ignored" \
+  env PR_COMMITS_FILE="$work/unsigned.commits.json" PR_JSON_FILE="$work/dependabot.pr.json" "$script" check "$base" "$sha_bump"
+expect 1 "Dependabot PR with a commit by someone else: SHA bump not ignored" \
+  env PR_COMMITS_FILE="$work/mixed.commits.json" PR_JSON_FILE="$work/dependabot.pr.json" "$script" check "$base" "$sha_bump"
+expect 1 "Dependabot PR without the commit list: SHA bump not ignored" as_pr dependabot check "$sha_bump"
 expect 1 "Dependabot: the action repository changed" dependabot_pr check \
   "$(head_of "(.jobs.gitleaks.steps[0].uses) = \"evil/checkout@$sha_a\"")"
 head=$(head_of '.')
@@ -321,6 +380,15 @@ ignores_case() {
   cp "$fixtures/$fixture" "$work/head/$name"
   expect "$want" "$label" "$wrapper" check "$work/head"
 }
+# The same rule changed against a base that already has it: a gate change.
+mkdir -p "$work/rules-base"
+cp -R "$base/." "$work/rules-base/"
+cp "$fixtures/gitleaks-rule.toml" "$work/rules-base/.gitleaks.toml"
+tree "$work/head" "$templates/ci-node.yml"
+sed 's/xyz/abc/' "$fixtures/gitleaks-rule.toml" >"$work/head/.gitleaks.toml"
+expect 1 ".gitleaks.toml a rule changed, no justification" feat_pr "$script" check "$work/rules-base" "$work/head"
+cp "$fixtures/gitleaks-rule.toml" "$work/head/.gitleaks.toml"
+expect 0 ".gitleaks.toml rules unchanged" feat_pr "$script" check "$work/rules-base" "$work/head"
 ignores_case 0 "osv-scanner.toml with reason and expiry" osv-scanner.toml osv-ok.toml
 ignores_case 0 "osv-scanner.toml with a datetime expiry" osv-scanner.toml osv-datetime.toml
 ignores_case 0 "nested osv-scanner.toml with reason and expiry" generators/ts/osv-scanner.toml osv-ok.toml
@@ -340,6 +408,16 @@ ignores_case 0 ".gitleaks.toml allowlist with justification and expiry" .gitleak
 ignores_case 1 ".gitleaks.toml allowlist without expiry" .gitleaks.toml gitleaks-no-expiry.toml
 ignores_case 1 ".gitleaks.toml without the default rules, no justification" .gitleaks.toml gitleaks-no-default.toml
 ignores_case 0 ".gitleaks.toml without the default rules, justified" .gitleaks.toml gitleaks-no-default.toml justified_pr
+ignores_case 1 ".gitleaks.toml [AllowList] (mixed case) without expiry" .gitleaks.toml gitleaks-allowlist-case.toml justified_pr
+ignores_case 1 ".gitleaks.toml DisabledRules (mixed case), no justification" .gitleaks.toml gitleaks-disabledrules-case.toml
+ignores_case 0 ".gitleaks.toml DisabledRules (mixed case), justified" .gitleaks.toml gitleaks-disabledrules-case.toml justified_pr
+ignores_case 1 ".gitleaks.toml keys differing only by case" .gitleaks.toml gitleaks-duplicate-case.toml justified_pr
+ignores_case 1 ".gitleaks.toml [extend] path" .gitleaks.toml gitleaks-extend-path.toml justified_pr
+ignores_case 1 ".gitleaks.toml a rule added, no justification" .gitleaks.toml gitleaks-rule.toml
+ignores_case 0 ".gitleaks.toml a rule added, justified" .gitleaks.toml gitleaks-rule.toml justified_pr
+ignores_case 1 ".gitleaks.toml not valid TOML" .gitleaks.toml gitleaksignore-ok justified_pr
+ignores_case 1 "osv-scanner.toml [[ignoredvulns]] (lowercase) without expiry" osv-scanner.toml osv-lowercase.toml
+ignores_case 1 "osv-scanner.toml in a build/ folder is checked" build/osv-scanner.toml osv-no-expiry.toml
 
 echo "== Workflow command injection"
 ignores_case 1 "an osv id holding a newline and '::error::'" osv-scanner.toml osv-injection.toml
