@@ -61,6 +61,14 @@ expect() {
 ruleset() { jq "$1" "$root/rulesets/protect-develop.json" >"$work/$2"; echo "$work/$2"; }
 repo_ruleset() { jq "$1" "$work/live-repo.json" | jq 'del(.id, .source_type)' >"$work/$2"; echo "$work/$2"; }
 
+echo "== The committed rulesets"
+if [[ "$(jq -c '.bypass_actors' "$root/rulesets/protect-develop.json")" == "[]" ]]; then
+  echo "ok   protect-develop.json has no bypass actor"
+else
+  echo "FAIL protect-develop.json declares bypass actors"
+  failures=$((failures + 1))
+fi
+
 echo "== Organisation rulesets"
 expect 0 "file matches live: nothing to do" - -- "$root/rulesets/protect-develop.json"
 expect 0 "file matches live, --apply: no write" - -- --apply "$root/rulesets/protect-develop.json"
@@ -77,16 +85,28 @@ expect 1 "not a ruleset" - -- "$(ruleset '{name}' notruleset.json)"
 bypass=$(ruleset '.bypass_actors = [{"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}]' bypass.json)
 expect 1 "bypass actor without --allow-bypass" - -- --apply "$bypass"
 expect 0 "bypass actor with --allow-bypass, --apply" "PUT orgs/SchoolEngine/rulesets/1" -- --apply --allow-bypass "$bypass"
-for actor in '{"actor_id": 0, "actor_type": "Integration", "bypass_mode": "always"}' \
-             '{"actor_type": "Integration", "bypass_mode": "always"}' \
-             '{"actor_id": null, "actor_type": "Team", "bypass_mode": "pull_request"}'; do
-  placeholder=$(ruleset ".bypass_actors = [$actor]" placeholder.json)
-  expect 1 "bypass actor with actor_id 0 or missing, even with --allow-bypass ($(jq -c '.actor_id' <<<"$actor"))" \
-    - -- --apply --allow-bypass "$placeholder"
+bypass_case() {
+  local want=$1 label=$2 actor=$3 write=-
+  [[ "$want" -ne 0 ]] || write="PUT orgs/SchoolEngine/rulesets/1"
+  expect "$want" "$label" "$write" -- --apply --allow-bypass "$(ruleset ".bypass_actors = [$actor]" actor.json)"
+}
+for id in 0 '"0"' '""' -5 1.5 null; do
+  bypass_case 1 "Integration with actor_id $id refused, even with --allow-bypass" \
+    "{\"actor_id\": $id, \"actor_type\": \"Integration\", \"bypass_mode\": \"always\"}"
 done
+bypass_case 1 "Team without actor_id refused" '{"actor_type": "Team", "bypass_mode": "pull_request"}'
+bypass_case 1 "RepositoryRole with actor_id 0 refused" '{"actor_id": 0, "actor_type": "RepositoryRole", "bypass_mode": "always"}'
+bypass_case 1 "User with a string actor_id refused" '{"actor_id": "42", "actor_type": "User", "bypass_mode": "always"}'
+bypass_case 1 "DeployKey with an actor_id refused (null expected)" '{"actor_id": 3, "actor_type": "DeployKey", "bypass_mode": "always"}'
+bypass_case 1 "unknown actor type refused" '{"actor_id": 3, "actor_type": "Robot", "bypass_mode": "always"}'
+bypass_case 0 "DeployKey with actor_id null accepted" '{"actor_id": null, "actor_type": "DeployKey", "bypass_mode": "always"}'
+bypass_case 0 "OrganizationAdmin (actor_id 1, ignored by the API) accepted" '{"actor_id": 1, "actor_type": "OrganizationAdmin", "bypass_mode": "always"}'
+bypass_case 0 "Team with a positive integer id accepted" '{"actor_id": 7, "actor_type": "Team", "bypass_mode": "pull_request"}'
 repo_placeholder=$(repo_ruleset '.bypass_actors = [{"actor_id": 0, "actor_type": "Integration", "bypass_mode": "always"}]' repo-placeholder.json)
 expect 1 "repository ruleset with a placeholder bypass actor" \
   - -- --apply --allow-bypass --repo SchoolEngine/contracts "$repo_placeholder"
+expect 2 "--repo with a .. segment" - -- --repo "SchoolEngine/.." "$root/rulesets/protect-develop.json"
+expect 2 "--repo with a . segment" - -- --repo "./contracts" "$root/rulesets/protect-develop.json"
 expect 2 "malformed --repo" - -- --repo "SchoolEngine" "$root/rulesets/protect-develop.json"
 expect 2 "unknown option" - -- --force "$root/rulesets/protect-develop.json"
 

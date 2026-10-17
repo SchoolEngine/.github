@@ -13,7 +13,7 @@
 # key, a PUT would keep the live bypass list and the file would no longer
 # describe the ruleset. A file that declares bypass actors is refused unless
 # --allow-bypass is given; the actors are printed in every case. A bypass
-# actor with actor_id 0 or missing is always refused.
+# actor without a valid actor_id for its type is always refused.
 # Requires gh (authenticated as an organisation owner or repository admin) and jq.
 set -euo pipefail
 
@@ -36,7 +36,7 @@ done
 file="${1:?$USAGE}"
 
 if [[ -n "$repo" ]]; then
-  if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ || "/$repo/" == */./* || "/$repo/" == */../* ]]; then
     echo "Refused: --repo must be <owner>/<repo>, got '$repo'." >&2
     exit 2
   fi
@@ -59,12 +59,20 @@ if ! jq -e 'has("bypass_actors")' "$file" >/dev/null; then
   exit 1
 fi
 
-# A placeholder actor (actor_id 0, null or missing, e.g. copied from a draft)
-# is never applied, even with --allow-bypass: the API may resolve it to an
-# actor nobody chose.
-unresolved="$(jq '[.bypass_actors[]? | select((.actor_id // 0) == 0)] | length' "$file")"
-if [[ "$unresolved" != "0" ]]; then
-  echo "Refused: $file has $unresolved bypass actor(s) with actor_id 0 or missing: set the real id (an app id, a team id or a role id)." >&2
+# Bypass actors as the REST API defines them: Integration, RepositoryRole,
+# Team and User need a real id (a positive integer: a placeholder such as 0,
+# "0", "" or a negative value is refused, even with --allow-bypass, since the
+# API may resolve it to an actor nobody chose); OrganizationAdmin ignores the
+# id (GitHub returns 1); DeployKey takes null. Any other type is refused.
+invalid="$(jq -r '[.bypass_actors[]? | select(
+    if (.actor_type | IN("Integration", "RepositoryRole", "Team", "User")) then
+      (.actor_id | (type == "number" and . > 0 and . == floor)) | not
+    elif .actor_type == "OrganizationAdmin" then false
+    elif .actor_type == "DeployKey" then .actor_id != null
+    else true end)
+  | "\(.actor_type // "?") \(.actor_id | tojson)"] | join(", ")' "$file")"
+if [[ -n "$invalid" ]]; then
+  echo "Refused: $file has bypass actor(s) without a valid actor_id for their type: $invalid." >&2
   exit 1
 fi
 
